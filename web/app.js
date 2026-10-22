@@ -277,7 +277,9 @@
       this.chart = null; this.layers = []; this.profile = null; this.hrows = []; this.vzoom = 1;
       this.hover = false; this.markerKey = '';
       this.R = { clock: null, k: -1, mode: '', sel: '', full: true, fresh: true };
+      this.following = true; this.dragging = false; this.vpan = false;
       this.bindAxisZoom();
+      this.bindPan();
     }
 
     configure(kind, iv) {
@@ -523,6 +525,67 @@
         }
       }
     }
+    // ---- free panning (TradingView-like): drag sideways pans time; a vertical drag turns
+    // auto-scale off so price pans too. While the operator drags, the replay never moves the
+    // view; on release, follow mode stays off if the newest bar is out of view (⟫ resumes).
+    bindPan() {
+      const wrap = this.host.parentElement;
+      const mk = (cls, text, title, onClick) => {
+        const b = document.createElement('button');
+        b.className = `paneBtn ${cls} hidden`; b.textContent = text; b.title = title;
+        b.onclick = (ev) => { ev.stopPropagation(); ev.target.blur(); onClick(); };
+        wrap.appendChild(b);
+        return b;
+      };
+      this.liveBtn = mk('live', '⟫', 'Scroll to the newest bar and follow it', () => this.goLive());
+      this.autoBtn = mk('auto', 'A', 'Auto-scale price (double-click the price axis also resets)', () => this.autoScale());
+      this.host.addEventListener('pointerdown', (ev) => {
+        if (!this.chart || ev.button !== 0 || this.onAxis(ev)) return;
+        this.dragging = true; this.dragY = ev.clientY;
+      }, { capture: true });
+      window.addEventListener('pointermove', (ev) => {
+        if (!this.dragging || !this.chart || this.vpan) return;
+        if (Math.abs(ev.clientY - this.dragY) > 6) {            // vertical intent: free price panning
+          this.vpan = true;
+          this.chart.priceScale('right').applyOptions({ autoScale: false });
+          this.autoBtn.classList.remove('hidden');
+        }
+      });
+      window.addEventListener('pointerup', () => {
+        if (!this.dragging) return;
+        this.dragging = false;
+        this.checkFollow();
+      });
+      this.host.addEventListener('wheel', () => setTimeout(() => this.checkFollow(), 0), { passive: true });
+    }
+    onAxis(ev) {
+      if (!this.chart) return false;
+      const rect = this.host.getBoundingClientRect();
+      return ev.clientX > rect.right - this.chart.priceScale('right').width();
+    }
+    lastIndex() { return this.hrows.length + Math.max(0, E.bucketOf(this.b, S.clock)); }
+    checkFollow() {
+      if (!this.chart) return;
+      const r = this.chart.timeScale().getVisibleLogicalRange(), last = this.lastIndex();
+      this.following = !!r && last >= r.from - 1 && last <= r.to + 1;
+      this.liveBtn.classList.toggle('hidden', this.following || S.mode === 'review');
+    }
+    goLive() {
+      if (!this.chart) return;
+      const ts = this.chart.timeScale(), r = ts.getVisibleLogicalRange(), last = this.lastIndex();
+      const w = r ? r.to - r.from : 120;
+      ts.setVisibleLogicalRange({ from: last - 0.8 * w, to: last + 0.2 * w });
+      this.following = true;
+      this.liveBtn.classList.add('hidden');
+    }
+    autoScale() {
+      if (!this.chart) return;
+      this.vpan = false; this.vzoom = 1;
+      this.chart.priceScale('right').applyOptions({ autoScale: true });
+      this.applyZoomProviders();
+      this.autoBtn.classList.add('hidden');
+    }
+
     bindAxisZoom() {
       const onAxis = (ev) => {
         if (!this.chart) return false;
@@ -533,12 +596,13 @@
         if (!onAxis(ev)) return;
         ev.preventDefault(); ev.stopPropagation();
         this.vzoom = Math.max(0.05, Math.min(20, this.vzoom * (ev.deltaY > 0 ? 1.12 : 1 / 1.12)));
+        this.vpan = false; this.autoBtn.classList.add('hidden');
         this.chart.priceScale('right').applyOptions({ autoScale: true });
         this.applyZoomProviders();
       }, { capture: true, passive: false });
       this.host.addEventListener('dblclick', (ev) => {
         if (!onAxis(ev)) return;
-        this.vzoom = 1;
+        this.vzoom = 1; this.vpan = false; this.autoBtn.classList.add('hidden');
         this.chart.priceScale('right').applyOptions({ autoScale: true });
         this.applyZoomProviders();
       }, { capture: true });
@@ -676,10 +740,8 @@
     // Follow the newest bar while the operator is watching it: once it reaches the right edge,
     // slide the window. If they've scrolled away (e.g. studying history), leave the view alone.
     follow(prevRange, prevLast, last) {
-      if (!prevRange) return;
+      if (!prevRange || this.dragging || !this.following) return;
       const ts = this.chart.timeScale(), w = prevRange.to - prevRange.from;
-      const watching = prevLast >= prevRange.from - 1 && prevLast <= prevRange.to + 1;
-      if (!watching) return;
       if (last > prevRange.to - 3) ts.setVisibleLogicalRange({ from: last + 3 - w, to: last + 3 });
       else if (last < prevRange.from) ts.setVisibleLogicalRange({ from: last - 0.8 * w, to: last + 0.2 * w });
     }
@@ -712,14 +774,20 @@
             L.series.update(item(k, L.partial(k)));
           }
         }
-        if (rebuild && (R.fresh || R.mode !== S.mode)) this.initialView(k);
+        if (rebuild && (R.fresh || R.mode !== S.mode)) {
+          this.initialView(k);
+          this.following = true; this.liveBtn.classList.add('hidden');
+          if (R.fresh) { this.vpan = false; this.autoBtn.classList.add('hidden'); }
+        }
         else if (S.mode === 'blind') {
           if (rebuild && prevRange) ts.setVisibleLogicalRange(prevRange);   // setData shifts the view
           this.follow(prevRange, rebuild ? H + k : H + R.k, H + k);
           if (rebuild && prevRange && (H + k < prevRange.from || H + k > prevRange.to)) {
             const w = prevRange.to - prevRange.from;
             ts.setVisibleLogicalRange({ from: H + k - 0.8 * w, to: H + k + 0.2 * w });
+            this.following = true;
           }
+          if (rebuild) this.liveBtn.classList.toggle('hidden', this.following);
         }
         R.clock = S.clock; R.k = k; R.mode = S.mode; R.sel = sel; R.full = false; R.fresh = false;
         if (!this.hover) this.drawLegend(null);

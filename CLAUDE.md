@@ -142,7 +142,11 @@ Three layers, data flowing one way:
    operator's TradingView: **blue VWAP, orange 2σ**, gray other bands. Chart panes at ≥1m prepend
    history rows (one whitespace separator per day breaks the lines); EMA20/BB(20,2) run over
    history+today closes, in-progress bar stepped from the last closed state. View: the library's
-   `shiftVisibleRangeOnNewBar` is off; `initialView(k)` anchors on the clock's bar (no history →
+   `shiftVisibleRangeOnNewBar` is off. Free panning: `bindPan()` — while the operator drags,
+   the replay never moves the view; a vertical drag turns auto-scale off (price pans like
+   TradingView); on release `checkFollow()` turns follow off if the newest bar is out of view.
+   Corner buttons: ⟫ (`goLive`) and A (`autoScale`). Seeks/loads re-centre and resume follow.
+   `initialView(k)` anchors on the clock's bar (no history →
    mid-pane; history → today's open near the left unless the clock bar would be off-screen) and `follow()` (slide only while the newest bar is being watched;
    restore the range after `setData`, which otherwise keeps the right gap and shoves bars off). Panes sync logical
    ranges only when intervals match. Chart times are fake-UTC seconds displayed as ET wall clock.

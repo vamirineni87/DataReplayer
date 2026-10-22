@@ -140,3 +140,9 @@ kbd { font: 10px ui-monospace, Consolas, monospace; color: var(--muted); border:
 
 .reveal { border-color: var(--warn); color: var(--warn); }
 button:disabled { opacity: .45; cursor: default; }
+
+/* per-pane corner buttons: ⟫ back to the newest bar (follow) · A auto-scale price */
+.paneBtn { position: absolute; z-index: 4; bottom: 34px; padding: 1px 7px; font-size: 12px; font-weight: 700;
+           background: rgba(22,26,33,.9); border-color: var(--accent); color: var(--accent); }
+.paneBtn.live { right: 84px; }
+.paneBtn.auto { right: 112px; }
