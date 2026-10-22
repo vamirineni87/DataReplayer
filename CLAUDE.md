@@ -11,9 +11,9 @@ Read **`docs/SPEC.md`** (full spec) and **`T:\data\ThetaData\THETA_ARCHIVE_HANDO
 (data provenance) before writing code.
 
 ## Status
-As of 2026-10-22 the repo holds only `docs/SPEC.md`, `README.md`, and this file — no code yet. Git remote:
-`https://github.com/vamirineni87/DataReplayer` (private). Build in the SPEC §7 phases (each independently runnable):
-1. **Slicer CLI** — `2026-08-28 SPXW 0` → compact JSON (no UI).
+Git remote: `https://github.com/vamirineni87/DataReplayer` (private). Build in the SPEC §7
+phases (each independently runnable):
+1. **Slicer CLI** — done (`replayer/slicer.py`).
 2. **Smooth chart + clock** — served `index.html`, replay engine, blind reveal. No trading.
 3. **MVP** — `c`/`p`/`x` marking, P&L, journal, trade overlays + CSV/JSON import.
 4. Optional fidelity/power features (AUTO-delta, tick rounding, brackets, Schwab-recordings).
@@ -23,7 +23,13 @@ chart panels, replay cadence, data horizon, journal destination, upload formats,
 review default).
 
 ## Commands
-- Tests (offline, synthetic parquet fixtures): `python tests/run_all.py`
+- All tests: `python tests/run_all.py`
+- Filter: `python tests/run_all.py <module-substr> [<test-substr>]`, e.g.
+  `python tests/run_all.py slicer as_of`. Tests build a tiny fake archive in a temp dir
+  (`tests/fixtures.py`) and repoint `replayer.config`; tests needing the real `T:` archive raise
+  `unittest.SkipTest` when it's absent. New test modules must be added to `MODULES` in `run_all.py`.
+- Slice a session: `python -m replayer.slicer 2026-08-28 SPXW 0 [--cadence 1s|trade] [--window 15] [--out f.json] [--no-cache]`
+  (summary on stderr; exit 2 = clean "no data").
 - Local server: stdlib `http.server`, modeled on the companion repo's `scripts/serve_calendar.py`
   (re-reads data per request).
 
@@ -39,7 +45,9 @@ review default).
   practice. Unit-test it.
 - **Two timestamp conventions** (SPEC §2): options `record_ts` = epoch-ms **UTC**; stock
   `timestamp` = naive **ET**. Convert options→ET once in the slicer; never mix downstream.
-- **Order by `(record_ts, sequence)`**, never `record_ts` alone (ms collisions).
+- **Order by `(record_ts, sequence)`**, never `record_ts` alone (ms collisions). `sequence` is a
+  32-bit counter stored signed — it **wraps negative mid-session** (verified on real data), so
+  compare it unsigned: `slicer.seq_key()` (`seq & 0xFFFFFFFF`).
 - **Date-filter per-expiry option files** — one file merges ~11 trading days (SPEC Gotcha #1).
 - **Stand alone.** Reference the companion repo (`E:\Programming\TradingBot\Schwab-TradingBotLite`)
   for patterns and copy small helpers (e.g. `market_calendar.py`), but do NOT import it at
@@ -55,18 +63,25 @@ review default).
 
 ## Architecture (SPEC §4)
 Three layers, data flowing one way:
-1. **Slicer (Python, `slicer.py`)** — `(session_date, root, dte)` → resolve expiry as the
-   `dte`-th NYSE trading day ≥ session date (holiday-aware) → read
-   `parquet\YYYY\MM\{EXPIRY}\tick_{ROOT}_{EXPIRY}.parquet` with column projection + predicate
-   pushdown (model: companion `scripts/pull_history.py` ~386–572) → UTC→ET → filter to the
-   session's RTH (configurable close; SPXW runs to 16:15) → keep **ATM ± 15 strikes** (C and P)
-   so any offset is already in memory → emit compact JSON
-   `{underlying, contracts: {osi: {strike, type, ticks:[{t,bid,ask,mid}]}}, meta}`, target
-   < a few MB.
-   - Underlying: SPY/QQQ/IWM from `stock\stock_quote_1s\…` (naive ET, 1 row/s). **SPXW has no
-     stock tape** — derive it from `trade_greeks.underlying_price` resampled to ~1s.
-   - Options archive ends **2026-08-28**; later dates must return a clear "no data / horizon"
-     message, as must a missing expiry file.
+1. **Slicer (`replayer/slicer.py`)** — `(session_date, root, dte)` → resolve expiry as the
+   `dte`-th NYSE trading day ≥ session date (`replayer/market_calendar.py`, copied from the
+   companion repo) → read `parquet\YYYY\MM\{EXPIRY}\tick_{ROOT}_{EXPIRY}.parquet` with column
+   projection + `record_ts` pushdown → UTC→ET → filter to the NYSE equity session (early closes
+   respected) → keep **ATM ± 15 strikes** (C and P) → emit columnar JSON
+   `{meta, underlying:{t,p}, contracts:{osi:{strike,type,t,bid,ask,mid}}}`.
+   - **Time axis everywhere downstream:** `t` = integer ms since ET midnight of the session date.
+   - The archive holds **no option rows after 16:00 ET** for any root (SPXW's 16:15 tail wasn't
+     harvested); SPXW has 09:25 pre-open prints that the RTH filter drops.
+   - Underlying: SPY/QQQ/IWM = `stock_quote_1s` NBBO mid. **SPXW has no stock tape** →
+     `trade_greeks.underlying_price`. Both are as-of sampled onto a 1s grid.
+   - Strike ladder = strikes **first seen at or before the open** (so later listings can't leak
+     the day's range); ATM taken from the first underlying sample.
+   - Size control, both no-look-ahead-safe: `--cadence 1s` keeps the last row per second with its
+     real `t` (stale, never early); then rows whose bid/ask/mid equal the previous row are dropped
+     (lossless for as-of). SPXW 0DTE ≈ 7 MB, SPY 0DTE ≈ 3.6 MB uncompressed.
+   - Slices are cached as JSON in `cache/` keyed by args + `SLICER_VERSION` — **bump
+     `SLICER_VERSION` whenever output changes.** Building one takes ~3–8 s cold.
+   - Clean `NoData` errors: past 2026-08-28 horizon, non-trading day, missing expiry file.
 2. **Replay UI (static `index.html` + vanilla JS + lightweight-charts from a pinned CDN, e.g.
    `4.2.0`; no build step)** — a single master clock in ET session-ms advanced on
    `requestAnimationFrame` (`clock += realDelta × speed`); each frame binary-searches each
