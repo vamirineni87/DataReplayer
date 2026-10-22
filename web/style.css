@@ -146,3 +146,6 @@ button:disabled { opacity: .45; cursor: default; }
            background: rgba(22,26,33,.9); border-color: var(--accent); color: var(--accent); }
 .paneBtn.live { right: 84px; }
 .paneBtn.auto { right: 112px; }
+
+#tapePx.hot { color: var(--warn); font-weight: 700; }
+#jReset:hover { border-color: var(--down); color: var(--down); }

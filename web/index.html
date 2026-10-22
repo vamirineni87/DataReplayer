@@ -52,6 +52,7 @@
     <div class="row"><span id="playState">PAUSED</span><span id="speed">1×</span></div>
     <div class="row"><span id="chartSym">SPY</span><b id="chartPx">—</b></div>
     <div class="row"><span>VWAP</span><span id="vwapPx">—</span></div>
+    <div class="row" title="Trades per second over the last 10 s, vs the session average so far"><span>Tape (10s)</span><span id="tapePx">—</span></div>
     <div class="row muted"><span>VAL / POC / VAH</span><span id="vaInfo">—</span></div>
     <div class="row" id="rootRow"><span id="rootSym">SPX</span><b id="rootPx">—</b></div>
 
@@ -98,6 +99,7 @@
       <span class="right">
         <button id="jUpload" title="Load trades from a JSON file (order_history.json format or a practice export)">Upload</button>
         <button id="jExport" title="Download this session's practice trades as JSON">Export</button>
+        <button id="jReset" title="Delete this session's practice trades (asks first)">Reset</button>
       </span>
       <input id="jFile" type="file" accept=".json,application/json" class="hidden">
     </div>

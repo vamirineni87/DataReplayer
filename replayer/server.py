@@ -10,7 +10,8 @@ Routes:
     GET /api/history?date=&root=&days=  prior sessions at 1m (VWAP/σ, VP) for chart context
     GET /api/daily?date=&root=&days=    prior daily bars (strictly before date) for 1D EMA/BB
     GET /api/quote?date=&root=&dte=&osi=&t=     exact bid/ask/mid as of t (full tick tape)
-    GET/POST/DELETE /api/journal                practice round trips (journal/trades.jsonl)
+    GET/POST/DELETE /api/journal                practice round trips (journal/trades.jsonl);
+                                                DELETE ?id= one trade, ?date=&root= reset a session
     GET /api/broker?date=                       real round trips from order_history.json (read-only)
     POST /api/parse-trades?date=&name=          uploaded JSON -> round trips (not stored)
 """
@@ -125,7 +126,10 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, trades.journal_append(self._body_json()))
 
     def _journal_delete(self, q):
-        self._json(200, {'deleted': trades.journal_delete(q['id'])})
+        if 'id' in q:
+            return self._json(200, {'deleted': trades.journal_delete(q['id'])})
+        date.fromisoformat(q['date'])                            # validate before deleting
+        self._json(200, {'deleted': trades.journal_reset(q['date'], q['root'].upper())})
 
     def _broker(self, q):
         self._json(200, {'trades': trades.broker_trades(date.fromisoformat(q['date']))})

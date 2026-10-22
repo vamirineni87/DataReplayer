@@ -53,3 +53,7 @@ HISTORY_MAX_DAYS = 10
 JOURNAL_PATH = Path(os.getenv('REPLAYER_JOURNAL', str(PROJECT_DIR / 'journal' / 'trades.jsonl')))
 ORDER_HISTORY = Path(os.getenv('ORDER_HISTORY',
                                r'E:\Programming\TradingBot\Schwab-TradingBotLite\order_history.json'))
+
+# Sub-second replay: snapshots of the forming 1s bar at each SUB_MS boundary (only where trades
+# changed it), so the in-progress candle moves with the tape's real tempo within a second.
+SUB_MS = 250

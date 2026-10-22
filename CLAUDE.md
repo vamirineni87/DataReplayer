@@ -98,7 +98,11 @@ Three layers, data flowing one way:
      visible only once the second is over. OHLC uses `LAST_SALE_CONDITIONS` (0 regular, 95 ISO) —
      codes 96/4/124/2/… print up to $5 off the NBBO and painted false wicks; VWAP/profile use
      `VWAP_CONDITIONS` (+115 odd lots); `v` counts all trades. Ships `vv/pv/p2v` sums centred on
-     `ref` so the client computes exact trade-level VWAP/σ.
+     `ref` so the client computes exact trade-level VWAP/σ. `n` = trade COUNT per second (tape
+     speed). `sub` = forming-bar snapshots at each `config.SUB_MS` (250 ms) boundary, stamped at
+     the boundary's last ms, only where trades changed the bar, final quarter omitted —
+     `Engine.liveSub/ohlcvAsOf/priceAsOf` merge the current second's latest snapshot into the
+     in-progress bar (never early, never double-counted with the finished 1s bar).
    - Strike ladder = strikes **first seen at or before the open** (so later listings can't leak
      the day's range); ATM taken from the first underlying sample.
    - Size control, both no-look-ahead-safe: `--cadence 1s` keeps the last row per second with its
@@ -170,7 +174,10 @@ Three layers, data flowing one way:
    Practice / Real (broker) / Uploaded; markers per source colour. `ConnectorPrimitive` draws
    entry→exit dashed lines at the underlying's prices with a P&L tag (`Engine.tradeConnectors`:
    only once the exit is reached in BLIND); an open position draws a live dotted line to now.
-   EMA/BB source timeframes include 15m/30m/1h (`TF_MS`) and 1D.
+   EMA/BB source timeframes include 15m/30m/1h (`TF_MS`) and 1D. "Tape" chip = trades-per-bar
+   histogram (own scale above volume); HUD "Tape (10s)" = `Engine.tapeStats` (finished seconds
+   only) vs the session average. Practice "Reset" = `DELETE /api/journal?date=&root=`
+   (`trades.journal_reset`, scoped to one session; also drops an open position).
    **Random-blind practice** (`r` / 🎲): random session for the root/DTE with `S.blindDate`, which
    hides the date in the date button, meta, Real tab, and chart time labels (`dayLabel` →
    D, D-1, …) until Reveal. Prices still hint at the era.

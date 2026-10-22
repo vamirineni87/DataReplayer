@@ -185,6 +185,21 @@ def test_chart_bars_from_trade_tape():
     assert abs((c['ref'] + c['pv'][0] / c['vv'][0]) - (500.0 * 100 + 500.1 * 50) / 150) < 1e-9
 
 
+def test_chart_bars_trade_counts_and_subsecond_snapshots():
+    with FakeArchive():
+        c = slicer.chart_bars('SPY', SESSION, OPEN_MS, CLOSE_MS)
+    assert c['n'] == [3, 2, 1, 1, 1]                            # every trade counts toward tape speed
+    s = c['sub']
+    # 09:30:00 q0 (100 @500), q2 adds the avg-price print's volume (state changed) — q3 omitted (=1s bar);
+    # 09:30:01 q0 both prints; 09:30:02 odd-lot only -> no eligible price -> no snapshot.
+    assert s['t'] == [OPEN_MS + 249, OPEN_MS + 749, OPEN_MS + 1249, CLOSE_MS - 251, CLOSE_MS + 249]
+    assert [s['o'][0], s['h'][0], s['l'][0], s['c'][0], s['v'][0], s['n'][0]] == [500.0, 500.0, 500.0, 500.0, 100, 1]
+    assert s['c'][1] == 500.0 and s['h'][1] == 500.0 and s['v'][1] == 103 and s['n'][1] == 2   # 500.80 print: no wick
+    assert [s['o'][2], s['h'][2], s['l'][2], s['c'][2], s['v'][2]] == [499.9, 499.95, 499.9, 499.95, 300]
+    for t in s['t']:                                             # each snapshot precedes its second's 1s bar
+        assert (t // 1000) * 1000 + 999 in c['t'] and t % 1000 != 999
+
+
 def test_spxw_slice_charts_spy():
     with FakeArchive():
         s = slicer.build_slice(SESSION, 'SPXW', 0, window=2)

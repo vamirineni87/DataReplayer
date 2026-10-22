@@ -257,6 +257,33 @@ tests.connectorsAppearOnlyOnceExitReached = () => {
   assert.strictEqual(E.tradeConnectors(trades, 0, true, timeOf, priceAt, style).length, 1);    // review
 };
 
+tests.subSecondSnapshotsNeverEarlyNeverDoubleCounted = () => {
+  // second 0 has a 1s bar (t=999) and sub snapshots at 249 / 499; second 1 likewise
+  const c = {
+    t: [999, 1999], o: [10, 12], h: [11, 13], l: [9, 12], c: [10.5, 12.5], v: [100, 50], n: [10, 5],
+    sub: { t: [249, 499, 1249], o: [10, 10, 12], h: [10, 11, 12.2], l: [10, 9, 12], c: [10, 9.5, 12.2], v: [20, 60, 10], n: [2, 6, 1] },
+  };
+  const b = E.buildBuckets(c.t, 0, 60000, 60000);
+  assert.strictEqual(E.ohlcvAsOf(c, b, 0, 248), null);                       // nothing before the first boundary
+  assert.deepStrictEqual(E.ohlcvAsOf(c, b, 0, 300), { open: 10, high: 10, low: 10, close: 10, volume: 20, n: 2 });
+  assert.strictEqual(E.ohlcvAsOf(c, b, 0, 800).close, 9.5);                  // latest snapshot, not the 1s bar
+  assert.deepStrictEqual(E.ohlcvAsOf(c, b, 0, 999),                          // 1s bar visible: snapshot dropped
+    { open: 10, high: 11, low: 9, close: 10.5, volume: 100, n: 10 });
+  const mid = E.ohlcvAsOf(c, b, 0, 1300);                                    // bar 0 + second 1's snapshot
+  assert.deepStrictEqual(mid, { open: 10, high: 12.2, low: 9, close: 12.2, volume: 110, n: 11 });
+  assert.strictEqual(E.ohlcvAsOf(c, b, 0, 2000).volume, 150);                 // both 1s bars, no snapshots
+  assert.strictEqual(E.priceAsOf(c, 1300), 12.2);
+  assert.strictEqual(E.priceAsOf(c, 1100), 10.5);                            // second 1 has no snapshot yet
+};
+
+tests.tapeStatsUseOnlyFinishedSeconds = () => {
+  const c = { t: [999, 1999, 2999, 3999], n: [10, 20, 30, 40] };
+  const cum = E.tapeCum(c);
+  const s = E.tapeStats(c, cum, 3500, 2000, 0);                              // window (1500, 3500]: 1999 + 2999
+  assert.strictEqual(s.rate, 25);
+  assert.strictEqual(s.total, 60);                                           // the 40 at 3999 not yet visible
+};
+
 let failed = 0;
 for (const [name, fn] of Object.entries(tests)) {
   try { fn(); console.log(`PASS engine.${name}`); }

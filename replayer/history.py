@@ -14,7 +14,7 @@ import numpy as np
 
 from . import config, sessions, slicer
 
-HISTORY_VERSION = 1
+HISTORY_VERSION = 2
 VA_PCT = 0.7
 
 
@@ -41,6 +41,7 @@ def day_summary(sym: str, day: date) -> dict:
     t = np.asarray(c['t']) - 999                       # second start
     o, h, l, cl = (np.asarray(c[k], dtype=float) for k in ('o', 'h', 'l', 'c'))
     v, vv = np.asarray(c['v'], dtype=float), np.asarray(c['vv'], dtype=float)
+    cnt = np.asarray(c['n'], dtype=float)
     pv, p2v = np.asarray(c['pv'], dtype=float), np.asarray(c['p2v'], dtype=float)
     ref, row_size = c['ref'], config.vp_row_size(sym)
     n_min = int(np.ceil((close_ms - open_ms) / 60000))
@@ -62,7 +63,7 @@ def day_summary(sym: str, day: date) -> dict:
     H = np.zeros(row.max() + 2)
     up_vol, dn_vol = np.zeros_like(H), np.zeros_like(H)
 
-    out = {k: [] for k in ('t', 'o', 'h', 'l', 'c', 'v', 'vwap', 'sd', 'poc', 'vah', 'val')}
+    out = {k: [] for k in ('t', 'o', 'h', 'l', 'c', 'v', 'n', 'vwap', 'sd', 'poc', 'vah', 'val')}
     total, lo0, hi0, poc = 0.0, len(H), -1, -1
     for mi in range(n_min):
         idx = np.nonzero(minute == mi)[0]
@@ -81,6 +82,7 @@ def day_summary(sym: str, day: date) -> dict:
         out['o'].append(float(o[idx[0]])); out['h'].append(float(h[idx].max()))
         out['l'].append(float(l[idx].min())); out['c'].append(float(cl[last]))
         out['v'].append(int(v[idx].sum()))
+        out['n'].append(int(cnt[idx].sum()))
         out['vwap'].append(round(float(vwap[last]), 4)); out['sd'].append(round(float(sd[last]), 5))
         out['poc'].append(round(float((base + poc) * row_size), 4))
         out['vah'].append(round(float((base + hi) * row_size), 4))

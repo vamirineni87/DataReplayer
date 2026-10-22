@@ -124,6 +124,22 @@ def journal_append(rec: dict) -> dict:
     return clean
 
 
+def journal_reset(session_date: str, root: str) -> int:
+    """Delete every practice trade of one session (date + root). Returns how many."""
+    path = config.JOURNAL_PATH
+    if not path.exists():
+        return 0
+    with _journal_lock:
+        lines = [ln for ln in path.read_text(encoding='utf-8').splitlines() if ln.strip()]
+        keep = [ln for ln in lines if not ((r := json.loads(ln)).get('session_date') == session_date
+                                           and r.get('root') == root)]
+        if len(keep) != len(lines):
+            tmp = path.with_suffix('.tmp')
+            tmp.write_text(''.join(ln + '\n' for ln in keep), encoding='utf-8')
+            tmp.replace(path)
+    return len(lines) - len(keep)
+
+
 def journal_delete(trade_id: str) -> bool:
     path = config.JOURNAL_PATH
     if not path.exists():

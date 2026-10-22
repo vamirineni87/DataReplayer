@@ -23,6 +23,7 @@ def test_day_summary_minutes_vwap_and_profile():
     assert d['o'] == [498.0, 499.0, 500.0] and d['c'] == [498.02, 499.02, 500.02]
     assert min(d['l']) == 498.0                                   # 480 avg-price print paints nothing
     assert d['v'] == [200, 5600, 200]                             # ...but counts in volume
+    assert d['n'] == [2, 3, 2]                                    # and in the tape count
     # session VWAP at the end of minute 2 (regular prints only)
     num = 100 * 498 + 100 * 498.02 + 300 * 499 + 300 * 499.02
     assert abs(d['vwap'][1] - num / 800) < 1e-6

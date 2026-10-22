@@ -96,16 +96,68 @@
   // v = all volume (bars); vv/pv/p2v = VWAP-eligible volume and its price sums (centred on ref).
 
   function aggOhlcv(c, i0, i1) {
-    let h = -Infinity, l = Infinity, v = 0;
-    for (let i = i0; i <= i1; i++) { if (c.h[i] > h) h = c.h[i]; if (c.l[i] < l) l = c.l[i]; v += c.v[i]; }
-    return { open: c.o[i0], high: h, low: l, close: c.c[i1], volume: v };
+    let h = -Infinity, l = Infinity, v = 0, n = 0;
+    for (let i = i0; i <= i1; i++) {
+      if (c.h[i] > h) h = c.h[i];
+      if (c.l[i] < l) l = c.l[i];
+      v += c.v[i];
+      if (c.n) n += c.n[i];
+    }
+    return { open: c.o[i0], high: h, low: l, close: c.c[i1], volume: v, n };
   }
 
-  /** OHLCV of bucket k from 1s bars with t <= clock (null if none yet). */
+  /** Index of the sub-second snapshot of the CURRENT (unfinished) second visible at `clock`, or
+   *  -1. Snapshots are stamped at their boundary's last ms, so one with t <= clock is history; a
+   *  snapshot is ignored once its second's own 1s bar is visible (no double counting). */
+  function liveSub(c, clock) {
+    if (!c.sub || !c.sub.t.length) return -1;
+    const j = asOfIndex(c.sub.t, clock);
+    if (j < 0) return -1;
+    const sec = Math.floor(c.sub.t[j] / 1000);
+    if (sec !== Math.floor(clock / 1000)) return -1;           // belongs to a finished second
+    const i = asOfIndex(c.t, clock);
+    return i >= 0 && Math.floor(c.t[i] / 1000) === sec ? -1 : j;
+  }
+
+  /** OHLCV of bucket k from 1s bars with t <= clock, plus the forming second's latest sub-second
+   *  snapshot (null if nothing yet). */
   function ohlcvAsOf(c, b, k, clock) {
     const i0 = b.first[k];
-    if (i0 < 0 || c.t[i0] > clock) return null;
-    return aggOhlcv(c, i0, Math.min(b.last[k], asOfIndex(c.t, clock)));
+    let bar = i0 >= 0 && c.t[i0] <= clock ? aggOhlcv(c, i0, Math.min(b.last[k], asOfIndex(c.t, clock))) : null;
+    const j = liveSub(c, clock);
+    if (j >= 0 && bucketOf(b, Math.floor(c.sub.t[j] / 1000) * 1000) === k) {
+      const s = c.sub;
+      if (!bar) bar = { open: s.o[j], high: s.h[j], low: s.l[j], close: s.c[j], volume: s.v[j], n: s.n[j] };
+      else {
+        bar.high = Math.max(bar.high, s.h[j]); bar.low = Math.min(bar.low, s.l[j]);
+        bar.close = s.c[j]; bar.volume += s.v[j]; bar.n += s.n[j];
+      }
+    }
+    return bar;
+  }
+
+  /** Last traded price as of clock, including the forming second (sub-second snapshots). */
+  function priceAsOf(c, clock) {
+    const j = liveSub(c, clock);
+    if (j >= 0) return c.sub.c[j];
+    const i = asOfIndex(c.t, clock);
+    return i < 0 ? null : c.c[i];
+  }
+
+  // ---------------------------------------------------------------- tape speed
+  /** Cumulative trade counts over the 1s bars (prefix sums for O(log n) windows). */
+  function tapeCum(c) {
+    const out = new Float64Array(c.t.length);
+    let a = 0;
+    for (let i = 0; i < c.t.length; i++) { a += c.n ? c.n[i] : 0; out[i] = a; }
+    return out;
+  }
+  /** Trades/s over the last windowMs of FINISHED seconds, and the session average so far. */
+  function tapeStats(c, cum, clock, windowMs, openMs) {
+    const i = asOfIndex(c.t, clock), i0 = asOfIndex(c.t, clock - windowMs);
+    const total = i >= 0 ? cum[i] : 0, before = i0 >= 0 ? cum[i0] : 0;
+    const elapsed = Math.max(1, (Math.min(clock, c.t[i] ?? clock) - openMs) / 1000);
+    return { rate: (total - before) / (windowMs / 1000), avg: total / elapsed, total };
   }
 
   function fullOhlcv(c, b) {
@@ -383,6 +435,6 @@
   return {
     SPEEDS, INTERVALS, MAX_FRAME_MS,
     asOfIndex, valueAsOf, advanceClock, buildBuckets, bucketOf, barAsOf, fullBars,
-    bucketCloseValues, mtfBB, mtfEMA, canOpen, canClose, optionPnl, excursion, tradeMarkers, tradeConnectors, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
+    bucketCloseValues, liveSub, priceAsOf, tapeCum, tapeStats, mtfBB, mtfEMA, canOpen, canClose, optionPnl, excursion, tradeMarkers, tradeConnectors, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
   };
 });

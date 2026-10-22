@@ -33,7 +33,7 @@ import pandas as pd
 from . import config
 from .market_calendar import is_trading_day, next_trading_days, rth_bounds
 
-SLICER_VERSION = 5
+SLICER_VERSION = 6
 ET = ZoneInfo('America/New_York')
 DAY_MS = 86_400_000
 
@@ -253,9 +253,14 @@ def chart_bars(sym: str, session_date: date, open_ms: int, close_ms: int):
     Trade conditions (config): o/h/l/c use LAST_SALE_CONDITIONS only, so
     average-price / late / odd-lot prints can't paint false wicks; a second
     with volume but no eligible print is a flat bar at the previous close.
-    `v` counts every trade. VWAP inputs use VWAP_CONDITIONS: `vv` (volume) and
+    `v` counts every trade and `n` is the trade COUNT (tape speed). VWAP inputs use VWAP_CONDITIONS: `vv` (volume) and
     sums centred on `ref` for numeric stability, so the client computes exact
     trade-level  vwap = ref + Σpv/Σvv,  σ² = Σp2v/Σvv − (Σpv/Σvv)².
+
+    `sub`: the forming bar as of each SUB_MS boundary inside a second (cumulative from the
+    second's start), stamped at the boundary's last ms and emitted only for quarters with trades
+    that changed it; the final quarter is omitted (it is the 1s bar itself). Visible only once
+    its boundary has passed — stale by < SUB_MS, never early.
     """
     path = stock_trade_path(sym, session_date)
     if not path.exists():
@@ -272,7 +277,8 @@ def chart_bars(sym: str, session_date: date, open_ms: int, close_ms: int):
     vv = df['size'].where(df['condition'].isin(config.VWAP_CONDITIONS), 0)
     df = df.assign(sec=df['t'] // 1000, vv=vv, pv=vv * d, p2v=vv * d * d)
 
-    secs = df.groupby('sec', sort=True).agg(v=('size', 'sum'), vv=('vv', 'sum'), pv=('pv', 'sum'), p2v=('p2v', 'sum'))
+    secs = df.groupby('sec', sort=True).agg(v=('size', 'sum'), n=('size', 'count'), vv=('vv', 'sum'),
+                                            pv=('pv', 'sum'), p2v=('p2v', 'sum'))
     g = df[last_sale].groupby('sec', sort=True)['price']
     secs = secs.join(pd.DataFrame({'o': g.first(), 'h': g.max(), 'l': g.min(), 'c': g.last()}))
     secs['c'] = secs['c'].ffill()                       # volume-only second: flat at prior close
@@ -284,9 +290,45 @@ def chart_bars(sym: str, session_date: date, open_ms: int, close_ms: int):
     for col in ('o', 'h', 'l', 'c'):
         out[col] = np.round(secs[col].to_numpy(), 4).tolist()
     out['v'] = secs['v'].astype('int64').tolist()
+    out['n'] = secs['n'].astype('int64').tolist()
     out['vv'] = secs['vv'].astype('int64').tolist()
     out['pv'] = np.round(secs['pv'].to_numpy(), 3).tolist()
     out['p2v'] = np.round(secs['p2v'].to_numpy(), 4).tolist()
+    out['sub'] = sub_snapshots(df, last_sale)
+    return out
+
+
+def sub_snapshots(df: pd.DataFrame, last_sale: pd.Series) -> dict:
+    """Forming-bar snapshots at SUB_MS boundaries (see chart_bars). df is sorted, with `sec`."""
+    step = config.SUB_MS
+    last_q = 1000 // step - 1
+    d = df.assign(q=(df['t'] - df['sec'] * 1000) // step, el=last_sale)
+    agg = d.groupby(['sec', 'q'], sort=True).agg(v=('size', 'sum'), n=('size', 'count')).reset_index()
+    e = d[d['el']].groupby(['sec', 'q'], sort=True)['price']
+    px = pd.DataFrame({'o': e.first(), 'h': e.max(), 'l': e.min(), 'c': e.last()}).reset_index()
+    agg = agg.merge(px, on=['sec', 'q'], how='left')
+    out = {k: [] for k in ('t', 'o', 'h', 'l', 'c', 'v', 'n')}
+    cur, o = None, None
+    for r in agg.itertuples(index=False):
+        if r.sec != cur:
+            cur, o, h, l, c, v, n, prev = r.sec, None, None, None, None, 0, 0, None
+        v += r.v
+        n += r.n
+        if r.o == r.o:                                   # not NaN: eligible prints this quarter
+            if o is None:
+                o, h, l = r.o, r.h, r.l
+            h, l, c = max(h, r.h), min(l, r.l), r.c
+        if r.q >= last_q or o is None:
+            continue
+        state = (o, h, l, c, v, n)
+        if state == prev:
+            continue
+        prev = state
+        out['t'].append(int(r.sec * 1000 + (r.q + 1) * step - 1))
+        for k, x in zip(('o', 'h', 'l', 'c'), (o, h, l, c)):
+            out[k].append(round(float(x), 4))
+        out['v'].append(int(v))
+        out['n'].append(int(n))
     return out
 
 

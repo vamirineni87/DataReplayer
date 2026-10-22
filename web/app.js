@@ -50,7 +50,7 @@
   const TF_MS = { ...E.INTERVALS, '15m': 900000, '30m': 1800000, '1h': 3600000 };
   const DAILY_BARS = 100;               // prior daily closes fetched for 1D EMA/BB (warm-up)
   const defaultInd = () => ({
-    vwap: true, bands: true, vp: true, vol: true,
+    vwap: true, bands: true, vp: true, vol: true, tape: true,
     ema: { on: false, len: 20, tf: '1m' },
     bb: { on: false, len: 20, mult: 2, tf: '1m' },
   });
@@ -214,10 +214,10 @@
           if (cur) rows.push(cur);
           const ms = d.open_ms + b * I;
           cur = { b, ms, date: d.date, open: d.open_ms, close: d.close_ms, time: E.chartTime(d.date, ms),
-            bar: { open: d.o[i], high: d.h[i], low: d.l[i], close: d.c[i], volume: d.v[i] } };
+            bar: { open: d.o[i], high: d.h[i], low: d.l[i], close: d.c[i], volume: d.v[i], n: d.n ? d.n[i] : 0 } };
         } else {
           cur.bar.high = Math.max(cur.bar.high, d.h[i]); cur.bar.low = Math.min(cur.bar.low, d.l[i]);
-          cur.bar.close = d.c[i]; cur.bar.volume += d.v[i];
+          cur.bar.close = d.c[i]; cur.bar.volume += d.v[i]; cur.bar.n += d.n ? d.n[i] : 0;
         }
         Object.assign(cur, { vwap: d.vwap[i], sd: d.sd[i], poc: d.poc[i], vah: d.vah[i], val: d.val[i] });
       }
@@ -335,6 +335,7 @@
       chip('σ', I.bands, 'VWAP ±1.8/2/2.2/2.5/3σ bands', () => { I.bands = !I.bands; });
       chip('VP', I.vp, 'Volume profile + developing POC/VAH/VAL', () => { I.vp = !I.vp; });
       chip('Vol', I.vol, 'Volume bars', () => { I.vol = !I.vol; });
+      chip('Tape', I.tape, 'Tape speed: number of trades per bar (above volume)', () => { I.tape = !I.tape; });
       chip('EMA', I.ema.on, 'EMA — length and source timeframe', () => { I.ema.on = !I.ema.on; });
       if (I.ema.on) cfg(I.ema, [['len', 'len', 'EMA length (bars of the source timeframe)'], ['tf', 'tf', 'Source timeframe']]);
       chip('BB', I.bb.on, 'Bollinger — SMA length, σ multiple, source timeframe', () => { I.bb.on = !I.bb.on; });
@@ -413,6 +414,14 @@
         const vol = this.chart.addHistogramSeries({ priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
         this.chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 }, visible: false });
         this.layers.push({ series: vol, full: (j) => volItem(bars[j]), partial: (k) => volItem(partialBar(k)), hist: (r) => volItem(r.bar), key: 'vol' });
+      }
+      if (IND.tape) {
+        // trades per bar — the tape's tempo; sits just above the volume bars on its own scale
+        const tape = this.chart.addHistogramSeries({ priceScaleId: 'tape', color: 'rgba(230,194,41,0.5)', lastValueVisible: false, priceLineVisible: false,
+          priceFormat: { type: 'volume' } });
+        this.chart.priceScale('tape').applyOptions({ scaleMargins: { top: 0.7, bottom: 0.16 }, visible: false });
+        const tItem = (x) => x && { value: x.n };
+        this.layers.push({ series: tape, full: (j) => tItem(bars[j]), partial: (k) => tItem(partialBar(k)), hist: (r) => tItem(r.bar), key: 'tape' });
       }
       if (IND.vwap) {
         this.layers.push({ series: this.chart.addLineSeries(lineOpts(COLORS.vwap, { lineWidth: 2, title: 'VWAP', lastValueVisible: true })),
@@ -518,7 +527,7 @@
               return { ...(r || {}), priceRange: { minValue: this.lock.lo, maxValue: this.lock.hi } };
             },
           });
-        } else if (L.series.options().priceScaleId !== 'vol') {
+        } else if (!['vol', 'tape'].includes(L.series.options().priceScaleId)) {
           // overlays never stretch the scale; VWAP/EMA count only while auto
           L.series.applyOptions({ autoscaleInfoProvider: (orig) => (L.overlay || this.lock ? null : orig()) });
         }
@@ -689,8 +698,10 @@
         h += `O <span class="${cls}">${n(bar.open)}</span> H <span class="${cls}">${n(bar.high)}</span> ` +
              `L <span class="${cls}">${n(bar.low)}</span> C <span class="${cls}">${n(bar.close)}</span>`;
       }
+      const tp = get('tape');
       const vol = get('vol');
       if (vol && vol.value != null) h += `  V ${(vol.value / 1000).toFixed(1)}K`;
+      if (tp && tp.value != null) h += `  <span class="poc">T ${tp.value}</span>`;
       const vw = get('vwap');
       if (vw && vw.value != null) h += `  <span class="vw">VWAP ${n(vw.value)}</span>`;
       const em = get('ema');
@@ -887,6 +898,7 @@
     S.rowSize = m.vp_row_size || 0.05;
     const vp = E.profileSeries(c, S.rowSize);
     S.ind = { ...E.vwapSeries(c), poc: vp.poc, vah: vp.vah, val: vp.val };
+    S.tapeCum = E.tapeCum(c);
     S.profileIdx = null;
     const rootUnd = m.root === 'SPXW' ? 'SPX' : m.root;
     for (const p of S.panes) {
@@ -1009,6 +1021,7 @@
     for (const b of document.querySelectorAll('.jtabs button')) b.classList.toggle('active', b.dataset.tab === tab);
     $('jShow').checked = S.show[tab];
     $('jExport').classList.toggle('hidden', tab !== 'practice');
+    $('jReset').classList.toggle('hidden', tab !== 'practice');
 
     const closed = shown.filter((t) => t.pnl != null);
     const net = closed.reduce((a, t) => a + t.pnl, 0), wins = closed.filter((t) => t.pnl > 0).length;
@@ -1056,6 +1069,19 @@
     b.onclick = () => { S.jtab = b.dataset.tab; savePrefs(); renderJournal(true); };
   }
   $('jShow').onchange = (ev) => { S.show[S.jtab] = ev.target.checked; S.tradesVer++; savePrefs(); ev.target.blur(); renderJournal(true); };
+  $('jReset').onclick = async (ev) => {
+    ev.target.blur();
+    if (!S.meta) return;
+    const n = S.journal.length + (S.pos ? 1 : 0);
+    if (!n) return toast('No practice trades to reset', 'err');
+    const what = `${S.journal.length} practice trade${S.journal.length === 1 ? '' : 's'}${S.pos ? ' + the open position' : ''}`;
+    if (!confirm(`Reset ${what} for this session? Other days and your real trades are not affected. This cannot be undone.`)) return;
+    try {
+      const r = await getJson(`/api/journal?date=${S.meta.session_date}&root=${S.meta.root}`, { method: 'DELETE' });
+      S.journal = []; S.pos = null; S.tradesVer++; renderJournal(true);
+      toast(`Reset: ${r.deleted} trade${r.deleted === 1 ? '' : 's'} removed`, 'ok');
+    } catch (e) { toast(`Reset failed: ${e.message}`, 'err'); }
+  };
   $('jExport').onclick = () => {
     const blob = new Blob([JSON.stringify(S.journal, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -1113,12 +1139,16 @@
     if (i < 0) {
       for (const id of ['chartPx', 'vwapPx', 'vaInfo']) $(id).textContent = '—';
     } else {
-      const last = c.c[i], v = ind.vwap[i], sd = ind.sd[i];
+      const last = E.priceAsOf(c, S.clock), v = ind.vwap[i], sd = ind.sd[i];
       const z = sd > 0 ? (last - v) / sd : 0;
       $('chartPx').textContent = f2(last);
       $('vwapPx').textContent = `${f2(v)}  (${z >= 0 ? '+' : ''}${z.toFixed(2)}σ)`;
       $('vaInfo').textContent = `${f2(ind.val[i])} / ${f2(ind.poc[i])} / ${f2(ind.vah[i])}`;
     }
+    const tape = E.tapeStats(c, S.tapeCum, S.clock, 10000, S.meta.open_ms);
+    const ratio = tape.avg > 0 ? tape.rate / tape.avg : 0;
+    $('tapePx').textContent = i < 0 ? '—' : `${tape.rate.toFixed(0)}/s · ${ratio.toFixed(1)}× avg`;
+    $('tapePx').className = ratio >= 2 ? 'hot' : '';
     $('rootPx').textContent = f2(S.sel.px);
     $('offset').textContent = S.offset > 0 ? `+${S.offset}` : `${S.offset}`;
     $('offsetLbl').textContent = S.offset === 0 ? 'ATM' : S.offset > 0 ? 'OTM' : 'ITM';

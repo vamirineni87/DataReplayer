@@ -59,6 +59,19 @@ def test_journal_append_validate_delete():
         assert not trades.journal_delete('missing')
 
 
+def test_journal_reset_is_scoped_to_one_session():
+    with FakeArchive():
+        base = {'root': 'SPXW', 'dte': 0, 'expiry': str(EXPIRY), 'osi': osi('SPXW', 'C', 7750), 'strike': 7750,
+                'type': 'C', 'qty': 1, 'entry_t': OPEN_MS, 'entry_mid': 10.0, 'exit_t': OPEN_MS + 1000, 'exit_bid': 10.5}
+        trades.journal_append({**base, 'session_date': str(SESSION)})
+        trades.journal_append({**base, 'session_date': str(SESSION)})
+        keep_day = trades.journal_append({**base, 'session_date': str(PRIOR)})
+        keep_root = trades.journal_append({**base, 'session_date': str(SESSION), 'root': 'SPY'})
+        assert trades.journal_reset(str(SESSION), 'SPXW') == 2
+        assert {r['id'] for r in trades.journal_read()} == {keep_day['id'], keep_root['id']}
+        assert trades.journal_reset(str(SESSION), 'SPXW') == 0
+
+
 def test_quote_at_is_exact_and_never_early():
     with FakeArchive():
         sym = osi('SPXW', 'C', 7750)
@@ -90,6 +103,8 @@ def test_trade_routes():
             saved = call('/api/journal', 'POST', rec)
             assert call(f'/api/journal?date={SESSION}&root=SPXW')['trades'][0]['id'] == saved['id']
             assert call(f'/api/journal?id={saved["id"]}', 'DELETE')['deleted'] is True
+            call('/api/journal', 'POST', rec)
+            assert call(f'/api/journal?date={SESSION}&root=SPXW', 'DELETE')['deleted'] == 1
             parsed = call(f'/api/parse-trades?date={SESSION}&name=h.json', 'POST', {'fills': order_history_fills()})
             assert len(parsed['trades']) == 3
             q = call(f'/api/quote?date={SESSION}&root=SPXW&dte=0&osi={urllib.request.quote(osi("SPXW", "C", 7750))}&t={10 * 3600_000}')
