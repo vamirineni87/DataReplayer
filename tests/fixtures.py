@@ -73,6 +73,23 @@ def spy_quote_rows():
                          'ask': [500.02, 500.12, 501.02], 'symbol': 'SPY'})
 
 
+def spy_trade_rows():
+    """Per-trade SPY tape (naive ET). Pre-open and post-16:00:00 prints must be dropped."""
+    rows = [('09:29:59.900', 1, 499.0, 10, 0),         # pre-open: dropped
+            ('09:30:00.100', 2, 500.00, 100, 0),
+            ('09:30:00.500', 9, 500.80, 3, 96),         # average-price print: volume only
+            ('09:30:00.900', 3, 500.10, 50, 95),
+            ('09:30:01.200', 4, 499.90, 200, 0),
+            ('09:30:01.200', 5, 499.95, 100, 0),        # same ms, later sequence -> bar close
+            ('09:30:02.300', 10, 499.97, 2, 115),       # odd lot only: flat bar, counts in VWAP
+            ('15:59:59.500', 6, 501.00, 10, 0),
+            ('16:00:00.000', 7, 501.05, 1000, 0),       # closing print: kept
+            ('16:00:01.000', 8, 502.00, 10, 0)]         # after close: dropped
+    return pd.DataFrame({'trade_timestamp': pd.to_datetime([f'{SESSION} {t}' for t, *_ in rows]),
+                         'sequence': [r[1] for r in rows], 'price': [r[2] for r in rows],
+                         'size': [r[3] for r in rows], 'condition': [r[4] for r in rows], 'symbol': 'SPY'})
+
+
 def spy_tick_rows():
     rows = []
     for k in range(495, 506):
@@ -99,6 +116,9 @@ class FakeArchive:
         q = config.THETA_STOCK / 'stock_quote_1s' / 'SPY' / '2026'
         q.mkdir(parents=True)
         spy_quote_rows().to_parquet(q / f'quote_1s_SPY_{SESSION}.parquet')
+        tq = config.THETA_STOCK / 'stock_trade_quote' / 'SPY' / '2026'
+        tq.mkdir(parents=True)
+        spy_trade_rows().to_parquet(tq / f'trade_quote_SPY_{SESSION}.parquet')
         self.root = root
         return self
 

@@ -1,7 +1,8 @@
 """Layer 1 — Slicer (SPEC §4).
 
 (session_date, root, dte) -> compact JSON for one replay session:
-underlying on a 1s grid + option bid/ask/mid for ATM ± STRIKE_WINDOW strikes.
+underlying on a 1s grid (drives strike selection) + option bid/ask/mid for
+ATM ± STRIKE_WINDOW strikes + 1s OHLCV bars of the chart symbol (SPY for SPXW).
 
 Integrity rules this module owns (SPEC §5):
 - Time axis everywhere downstream is `t` = integer ms since ET midnight of the
@@ -32,7 +33,7 @@ import pandas as pd
 from . import config
 from .market_calendar import is_trading_day, next_trading_days, rth_bounds
 
-SLICER_VERSION = 2
+SLICER_VERSION = 4
 ET = ZoneInfo('America/New_York')
 DAY_MS = 86_400_000
 
@@ -100,6 +101,10 @@ def option_path(tier: str, root: str, expiry: date) -> Path:
 
 def stock_quote_path(sym: str, d: date) -> Path:
     return config.THETA_STOCK / 'stock_quote_1s' / sym / f'{d:%Y}' / f'quote_1s_{sym}_{d.isoformat()}.parquet'
+
+
+def stock_trade_path(sym: str, d: date) -> Path:
+    return config.THETA_STOCK / 'stock_trade_quote' / sym / f'{d:%Y}' / f'trade_quote_{sym}_{d.isoformat()}.parquet'
 
 
 # ------------------------------------------------------------------ core helpers
@@ -238,6 +243,53 @@ def underlying_series(root: str, session_date: date, expiry: date, open_ms: int,
     return gt, gp, source
 
 
+def chart_bars(sym: str, session_date: date, open_ms: int, close_ms: int):
+    """1-second OHLCV bars of the chart symbol from the per-trade stock tape.
+
+    Each bar is stamped t = second_start + 999: it becomes visible only once its
+    second is over (stale < 1s, never early). Trades through the close second
+    are kept; downstream bucketing folds them into the last bar.
+
+    Trade conditions (config): o/h/l/c use LAST_SALE_CONDITIONS only, so
+    average-price / late / odd-lot prints can't paint false wicks; a second
+    with volume but no eligible print is a flat bar at the previous close.
+    `v` counts every trade. VWAP inputs use VWAP_CONDITIONS: `vv` (volume) and
+    sums centred on `ref` for numeric stability, so the client computes exact
+    trade-level  vwap = ref + Σpv/Σvv,  σ² = Σp2v/Σvv − (Σpv/Σvv)².
+    """
+    path = stock_trade_path(sym, session_date)
+    if not path.exists():
+        raise NoData(f'no {sym} trade tape for {session_date} ({path.name})')
+    df = pd.read_parquet(path, columns=['trade_timestamp', 'sequence', 'price', 'size', 'condition'])
+    df['t'] = naive_et_to_session_ms(df['trade_timestamp'], session_date)
+    df = df[(df['t'] >= open_ms) & (df['t'] < close_ms + 1000) & (df['price'] > 0) & (df['size'] > 0)]
+    df = df.assign(_seq=seq_key(df['sequence'])).sort_values(['t', '_seq'], kind='stable')
+    last_sale = df['condition'].isin(config.LAST_SALE_CONDITIONS)
+    if not last_sale.any():
+        raise NoData(f'no {sym} trades in RTH on {session_date}')
+    ref = float(df.loc[last_sale, 'price'].iat[0])
+    d = df['price'] - ref
+    vv = df['size'].where(df['condition'].isin(config.VWAP_CONDITIONS), 0)
+    df = df.assign(sec=df['t'] // 1000, vv=vv, pv=vv * d, p2v=vv * d * d)
+
+    secs = df.groupby('sec', sort=True).agg(v=('size', 'sum'), vv=('vv', 'sum'), pv=('pv', 'sum'), p2v=('p2v', 'sum'))
+    g = df[last_sale].groupby('sec', sort=True)['price']
+    secs = secs.join(pd.DataFrame({'o': g.first(), 'h': g.max(), 'l': g.min(), 'c': g.last()}))
+    secs['c'] = secs['c'].ffill()                       # volume-only second: flat at prior close
+    for col in ('o', 'h', 'l'):
+        secs[col] = secs[col].fillna(secs['c'])
+    secs = secs.dropna(subset=['c'])                     # nothing eligible yet at the very open
+
+    out = {'symbol': sym, 'ref': ref, 't': (secs.index.to_numpy('int64') * 1000 + 999).tolist()}
+    for col in ('o', 'h', 'l', 'c'):
+        out[col] = np.round(secs[col].to_numpy(), 4).tolist()
+    out['v'] = secs['v'].astype('int64').tolist()
+    out['vv'] = secs['vv'].astype('int64').tolist()
+    out['pv'] = np.round(secs['pv'].to_numpy(), 3).tolist()
+    out['p2v'] = np.round(secs['p2v'].to_numpy(), 4).tolist()
+    return out
+
+
 # ------------------------------------------------------------------ slice
 
 def _validate(session_date: date, root: str, dte: int):
@@ -263,6 +315,7 @@ def build_slice(session_date: date, root: str, dte: int, cadence: str = '1s',
 
     opts = read_option_session(root, expiry, session_date, open_ms, close_ms)
     ut, up, usource = underlying_series(root, session_date, expiry, open_ms, close_ms)
+    chart = chart_bars(config.CHART_SYMBOL[root], session_date, open_ms, close_ms)
 
     ladder = ladder_known_at_open(root, expiry, session_date, open_ms)
     ladder_source = 'known at open'
@@ -306,10 +359,12 @@ def build_slice(session_date: date, root: str, dte: int, cadence: str = '1s',
             'strikes': strikes,
             'ladder_source': ladder_source,
             'underlying_source': usource,
+            'chart_symbol': chart['symbol'],
             'option_rows_session': int(len(opts)),
             'option_rows_emitted': int(sum(len(c['t']) for c in contracts.values())),
         },
         'underlying': {'t': ut.tolist(), 'p': np.round(up, 4).tolist()},
+        'chart': chart,
         'contracts': contracts,
     }
 

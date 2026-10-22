@@ -14,7 +14,7 @@
   'use strict';
 
   const SPEEDS = [0.25, 0.5, 1, 2, 3, 5, 10, 30, 60, 600];   // last = "Max"
-  const INTERVALS = { '1s': 1000, '5s': 5000, '15s': 15000, '1m': 60000, '5m': 300000 };
+  const INTERVALS = { '1s': 1000, '5s': 5000, '15s': 15000, '1m': 60000, '2m': 120000, '5m': 300000 };
   const MAX_FRAME_MS = 250;   // clamp real dt (background tab / debugger) so the clock never leaps
 
   /** Index of the last sample with t[i] <= at, or -1. `t` sorted ascending. */
@@ -91,6 +91,117 @@
     return out;
   }
 
+  // ---------------------------------------------------------------- chart bars (OHLCV)
+  // `c` = slicer `chart` block: 1s bars {t, o, h, l, c, v, vv, pv, p2v, ref}, t = second end.
+  // v = all volume (bars); vv/pv/p2v = VWAP-eligible volume and its price sums (centred on ref).
+
+  function aggOhlcv(c, i0, i1) {
+    let h = -Infinity, l = Infinity, v = 0;
+    for (let i = i0; i <= i1; i++) { if (c.h[i] > h) h = c.h[i]; if (c.l[i] < l) l = c.l[i]; v += c.v[i]; }
+    return { open: c.o[i0], high: h, low: l, close: c.c[i1], volume: v };
+  }
+
+  /** OHLCV of bucket k from 1s bars with t <= clock (null if none yet). */
+  function ohlcvAsOf(c, b, k, clock) {
+    const i0 = b.first[k];
+    if (i0 < 0 || c.t[i0] > clock) return null;
+    return aggOhlcv(c, i0, Math.min(b.last[k], asOfIndex(c.t, clock)));
+  }
+
+  function fullOhlcv(c, b) {
+    const out = new Array(b.n);
+    for (let k = 0; k < b.n; k++) out[k] = b.first[k] < 0 ? null : aggOhlcv(c, b.first[k], b.last[k]);
+    return out;
+  }
+
+  // ---------------------------------------------------------------- VWAP + σ bands
+  /** Per-1s-bar cumulative session VWAP and volume-weighted σ (trade-level exact). */
+  function vwapSeries(c) {
+    const n = c.t.length, vwap = new Float64Array(n), sd = new Float64Array(n);
+    let V = 0, PV = 0, P2V = 0;
+    for (let i = 0; i < n; i++) {
+      V += c.vv[i]; PV += c.pv[i]; P2V += c.p2v[i];
+      const m = V > 0 ? PV / V : 0;
+      vwap[i] = c.ref + m;
+      sd[i] = Math.sqrt(Math.max(0, P2V / V - m * m));
+    }
+    return { vwap, sd };
+  }
+
+  // ---------------------------------------------------------------- volume profile
+  // Each 1s bar's VWAP-eligible volume goes to the row of its own VWAP (ref + pv/vv); rows are
+  // `rowSize` wide, centred on multiples of rowSize. Up/down split by bar direction.
+  const VP_SPAN = 8000;          // rows allocated around ref (±400 $ at 0.05)
+
+  function profileRows(c, rowSize) {
+    const base = Math.round(c.ref / rowSize) - VP_SPAN / 2;
+    const row = new Int32Array(c.t.length);
+    for (let i = 0; i < c.t.length; i++) {
+      const px = c.vv[i] > 0 ? c.ref + c.pv[i] / c.vv[i] : c.c[i];
+      const r = Math.round(px / rowSize) - base;
+      row[i] = Math.max(0, Math.min(VP_SPAN - 1, r));
+    }
+    return { base, row };
+  }
+
+  /** Value area around `poc` holding >= vaPct of total (expand toward the larger neighbour). */
+  function valueArea(H, lo0, hi0, poc, total, vaPct) {
+    let lo = poc, hi = poc, acc = H[poc];
+    const target = total * vaPct;
+    while (acc < target) {
+      const up = hi + 1 <= hi0 ? H[hi + 1] : -1;
+      const dn = lo - 1 >= lo0 ? H[lo - 1] : -1;
+      if (up < 0 && dn < 0) break;
+      if (up >= dn) { hi++; acc += up; } else { lo--; acc += dn; }
+    }
+    return [lo, hi];
+  }
+
+  /** Developing POC / VAH / VAL after each 1s bar (prices), for the step lines. */
+  function profileSeries(c, rowSize, vaPct) {
+    vaPct = vaPct || 0.7;
+    const n = c.t.length, { base, row } = profileRows(c, rowSize);
+    const H = new Float64Array(VP_SPAN);
+    const poc = new Float64Array(n), vah = new Float64Array(n), val = new Float64Array(n);
+    let total = 0, p = -1, lo0 = VP_SPAN, hi0 = -1;
+    for (let i = 0; i < n; i++) {
+      const r = row[i];
+      H[r] += c.vv[i]; total += c.vv[i];
+      if (r < lo0) lo0 = r;
+      if (r > hi0) hi0 = r;
+      if (p < 0 || H[r] > H[p]) p = r;          // ties keep the earlier POC
+      const [lo, hi] = valueArea(H, lo0, hi0, p, total, vaPct);
+      poc[i] = (base + p) * rowSize; vah[i] = (base + hi) * rowSize; val[i] = (base + lo) * rowSize;
+    }
+    return { poc, vah, val };
+  }
+
+  /** Profile histogram from 1s bars 0..endIdx: rows [{price, up, down}], poc/vah/val prices, max. */
+  function profileAsOf(c, rowSize, endIdx, vaPct) {
+    vaPct = vaPct || 0.7;
+    if (endIdx < 0) return null;
+    const { base, row } = profileRows(c, rowSize);
+    const up = new Map(), dn = new Map(), H = new Float64Array(VP_SPAN);
+    let total = 0, lo0 = VP_SPAN, hi0 = -1, p = -1;
+    for (let i = 0; i <= endIdx; i++) {
+      const r = row[i], m = c.c[i] >= c.o[i] ? up : dn;
+      m.set(r, (m.get(r) || 0) + c.vv[i]);
+      H[r] += c.vv[i]; total += c.vv[i];
+      if (r < lo0) lo0 = r;
+      if (r > hi0) hi0 = r;
+      if (p < 0 || H[r] > H[p]) p = r;
+    }
+    const [lo, hi] = valueArea(H, lo0, hi0, p, total, vaPct);
+    const rows = [];
+    let max = 0;
+    for (let r = lo0; r <= hi0; r++) {
+      if (!H[r]) continue;
+      rows.push({ price: (base + r) * rowSize, up: up.get(r) || 0, down: dn.get(r) || 0, inVA: r >= lo && r <= hi });
+      if (H[r] > max) max = H[r];
+    }
+    return { rows, max, rowSize, poc: (base + p) * rowSize, vah: (base + hi) * rowSize, val: (base + lo) * rowSize };
+  }
+
   /** Live tool's OptionWindow.pick: nearest strike (ties -> lower), + offset = OTM, clamped. */
   function pickStrike(strikes, price, type, offset) {
     const s = strikes.slice().sort((a, b) => a - b);
@@ -132,6 +243,6 @@
   return {
     SPEEDS, INTERVALS, MAX_FRAME_MS,
     asOfIndex, valueAsOf, advanceClock, buildBuckets, bucketOf, barAsOf, fullBars,
-    bucketCloseValues, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
+    bucketCloseValues, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
   };
 });

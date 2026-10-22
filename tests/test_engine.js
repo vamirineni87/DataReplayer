@@ -102,6 +102,81 @@ tests.chartTimeDisplaysEtWallClock = () => {
   assert.strictEqual(new Date(s * 1000).toISOString(), '2026-08-28T09:30:00.000Z');
 };
 
+// Synthetic 1s chart bars built from synthetic trades, exactly as the slicer does.
+function makeChart(nSec, seedInit) {
+  let seed = seedInit || 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const trades = [];
+  let px = 500;
+  for (let s = 0; s < nSec; s++) {
+    if (rnd() < 0.2) continue;                                   // some seconds have no trades
+    const n = 1 + Math.floor(rnd() * 5);
+    for (let j = 0; j < n; j++) {
+      px = Math.round((px + (rnd() - 0.5) * 0.1) * 100) / 100;
+      trades.push({ sec: s, p: px, v: 1 + Math.floor(rnd() * 300) });
+    }
+  }
+  const ref = trades[0].p;
+  const c = { ref, t: [], o: [], h: [], l: [], c: [], v: [], vv: [], pv: [], p2v: [] };
+  for (const tr of trades) {
+    const t = OPEN + tr.sec * 1000 + 999, last = c.t.length - 1;
+    const d = tr.p - ref;
+    if (last < 0 || c.t[last] !== t) {
+      c.t.push(t); c.o.push(tr.p); c.h.push(tr.p); c.l.push(tr.p); c.c.push(tr.p);
+      c.v.push(tr.v); c.vv.push(tr.v); c.pv.push(tr.v * d); c.p2v.push(tr.v * d * d);
+    } else {
+      c.h[last] = Math.max(c.h[last], tr.p); c.l[last] = Math.min(c.l[last], tr.p); c.c[last] = tr.p;
+      c.v[last] += tr.v; c.vv[last] += tr.v; c.pv[last] += tr.v * d; c.p2v[last] += tr.v * d * d;
+    }
+  }
+  return { c, trades };
+}
+const near = (a, b, eps) => Math.abs(a - b) <= (eps || 1e-9);
+
+tests.vwapAndSigmaMatchBruteForceOverTrades = () => {
+  const { c, trades } = makeChart(600);
+  const { vwap, sd } = E.vwapSeries(c);
+  for (const i of [0, 10, 100, c.t.length - 1]) {
+    const upto = trades.filter((tr) => OPEN + tr.sec * 1000 + 999 <= c.t[i]);
+    const V = upto.reduce((a, tr) => a + tr.v, 0);
+    const m = upto.reduce((a, tr) => a + tr.v * tr.p, 0) / V;
+    const s = Math.sqrt(upto.reduce((a, tr) => a + tr.v * (tr.p - m) ** 2, 0) / V);
+    assert.ok(near(vwap[i], m, 1e-9), `vwap ${vwap[i]} vs ${m}`);
+    assert.ok(near(sd[i], s, 1e-9), `sd ${sd[i]} vs ${s}`);
+  }
+};
+
+tests.developingProfileMatchesFromScratch = () => {
+  const { c } = makeChart(900, 11);
+  const dev = E.profileSeries(c, 0.05);
+  for (const i of [0, 1, 50, 300, c.t.length - 1]) {
+    const snap = E.profileAsOf(c, 0.05, i);
+    assert.ok(near(dev.poc[i], snap.poc) && near(dev.vah[i], snap.vah) && near(dev.val[i], snap.val), `row ${i}`);
+    const total = snap.rows.reduce((a, r) => a + r.up + r.down, 0);
+    const inVA = snap.rows.filter((r) => r.inVA).reduce((a, r) => a + r.up + r.down, 0);
+    assert.ok(inVA >= 0.7 * total - 1e-9, 'value area holds >= 70%');
+    assert.ok(snap.val <= snap.poc && snap.poc <= snap.vah);
+    const pocRow = snap.rows.find((r) => near(r.price, snap.poc));
+    assert.strictEqual(pocRow.up + pocRow.down, snap.max, 'POC is the heaviest row');
+  }
+  assert.strictEqual(E.profileAsOf(c, 0.05, -1), null);
+};
+
+tests.ohlcvAsOfNeverUsesUnfinishedSeconds = () => {
+  const { c } = makeChart(600, 3);
+  const b = E.buildBuckets(c.t, OPEN, OPEN + 600000, 60000);
+  for (let clock = OPEN; clock < OPEN + 600000; clock += 777) {
+    const k = E.bucketOf(b, clock);
+    const bar = E.ohlcvAsOf(c, b, k, clock);
+    const vis = [];
+    for (let i = 0; i < c.t.length; i++) if (c.t[i] <= clock && E.bucketOf(b, c.t[i]) === k) vis.push(i);
+    if (!vis.length) { assert.strictEqual(bar, null); continue; }
+    assert.strictEqual(bar.close, c.c[vis[vis.length - 1]]);
+    assert.strictEqual(bar.volume, vis.reduce((a, i) => a + c.v[i], 0));
+    assert.strictEqual(bar.high, Math.max(...vis.map((i) => c.h[i])));
+  }
+};
+
 let failed = 0;
 for (const [name, fn] of Object.entries(tests)) {
   try { fn(); console.log(`PASS engine.${name}`); }

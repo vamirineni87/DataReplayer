@@ -23,7 +23,11 @@ python -m replayer.server            # http://127.0.0.1:8765/  (localhost only)
 python -m replayer.slicer 2026-08-28 SPXW 0 --out spxw.json   # slice one session (CLI)
 python tests/run_all.py              # offline tests
 ```
-Deep link: `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review`. Press `?` in the UI for keys.
+Deep link: `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review&view=tv`. Press `?` in the UI for keys.
+
+Views: **TradingView** (SPY 1m + SPY 1s, VWAP ±σ bands, volume, developing POC/VAH/VAL + volume
+profile — SPY is the chart proxy for SPXW), **Classic** (underlying + option C/P mids), **SPY 1m +
+options**, or **Custom** (pick Source + Interval per pane).
 
 ## Stack
 Python (`pandas` + `pyarrow`) slicer + stdlib HTTP server; static HTML + TradingView

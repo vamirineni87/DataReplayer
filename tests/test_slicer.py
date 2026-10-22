@@ -169,6 +169,29 @@ def test_build_slice_spy_uses_stock_mid():
     assert 'quote_1s' in s['meta']['underlying_source']
 
 
+def test_chart_bars_from_trade_tape():
+    with FakeArchive():
+        c = slicer.chart_bars('SPY', SESSION, OPEN_MS, CLOSE_MS)
+    # Bars stamped at second END (visible only once the second is over).
+    assert c['t'] == [OPEN_MS + 999, OPEN_MS + 1999, OPEN_MS + 2999, CLOSE_MS - 1000 + 999, CLOSE_MS + 999]
+    assert c['o'][:2] == [500.0, 499.9] and c['c'][:2] == [500.1, 499.95]
+    assert c['h'][0] == 500.1                                   # 500.80 avg-price print paints no wick
+    assert c['l'][1] == 499.9
+    assert [c['o'][2], c['h'][2], c['l'][2], c['c'][2]] == [499.95] * 4   # odd-lot-only second: flat
+    assert c['v'] == [153, 300, 2, 10, 1000]                    # all trades; pre-open/post-close dropped
+    assert c['vv'] == [150, 300, 2, 10, 1000]                   # VWAP excludes the avg-price print
+    assert c['ref'] == 500.0
+    # Volume-weighted sums centred on ref reproduce the exact VWAP of the first second.
+    assert abs((c['ref'] + c['pv'][0] / c['vv'][0]) - (500.0 * 100 + 500.1 * 50) / 150) < 1e-9
+
+
+def test_spxw_slice_charts_spy():
+    with FakeArchive():
+        s = slicer.build_slice(SESSION, 'SPXW', 0, window=2)
+    assert s['meta']['chart_symbol'] == 'SPY' and s['chart']['symbol'] == 'SPY'
+    assert 'trade_greeks' in s['meta']['underlying_source']     # strikes still follow SPX
+
+
 def test_no_data_cases():
     with FakeArchive():
         e = _raises(NoData, slicer.build_slice, date(2026, 8, 31), 'SPXW', 0)

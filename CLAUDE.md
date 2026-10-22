@@ -21,9 +21,12 @@ phases (each independently runnable):
 Confirm the SPEC §10 open decisions with the operator before/while building (first instrument,
 chart panels, replay cadence, data horizon, journal destination, upload formats, blind vs
 review default).
-Decided so far: SPXW 0DTE is the default/first-tuned root; both panes stacked (underlying candles
-+ selected C/P mids); 1s option cadence; both reveal modes, **always opening BLIND**. Still open:
-data horizon (Schwab L1), journal destination, upload formats (ask for a sample file).
+Decided so far: SPXW 0DTE is the default/first-tuned root; 1s option cadence; both reveal modes,
+**always opening BLIND**. The operator trades SPXW but **charts SPY as the SPX proxy** and wants a
+TradingView-like layout (SPY 1m on top, SPY 1s below, each with session VWAP ±1.8/2/2.2/2.5/3σ,
+volume, developing POC/VAH/VAL + volume profile) — but **every view stays selectable** (presets +
+per-pane source/interval; never remove a view). Date picking shows only days with data. Still
+open: data horizon (Schwab L1), journal destination, upload formats (ask for a sample file).
 
 ## Commands
 - All tests: `python tests/run_all.py`
@@ -32,9 +35,10 @@ data horizon (Schwab L1), journal destination, upload formats (ask for a sample 
   (`tests/fixtures.py`) and repoint `replayer.config`; tests needing the real `T:` archive raise
   `unittest.SkipTest` when it's absent. New test modules must be added to `MODULES` in `run_all.py`.
 - Slice a session: `python -m replayer.slicer 2026-08-28 SPXW 0 [--cadence 1s|trade] [--window 15] [--out f.json] [--no-cache]`
-  (summary on stderr; exit 2 = clean "no data").
+  (summary on stderr; exit 2 = clean "no data"). Restart the server after slicer changes (it
+  imports the code once) and bump `SLICER_VERSION`.
 - Server + UI: `python -m replayer.server [--port 8765]` → `http://127.0.0.1:8765/`.
-  Deep link `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review&speed=60&play=1`.
+  Deep link `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review&view=classic&speed=60&play=1`.
 - JS engine tests alone: `node tests/test_engine.js` (run_all bridges them via `test_engine_js`).
 - Visual check without a browser session: headless Chrome
   `chrome --headless=new --window-size=1600,900 --virtual-time-budget=15000 --screenshot=<out.png> "<deep link>"`
@@ -79,8 +83,14 @@ Three layers, data flowing one way:
    - **Time axis everywhere downstream:** `t` = integer ms since ET midnight of the session date.
    - The archive holds **no option rows after 16:00 ET** for any root (SPXW's 16:15 tail wasn't
      harvested); SPXW has 09:25 pre-open prints that the RTH filter drops.
-   - Underlying: SPY/QQQ/IWM = `stock_quote_1s` NBBO mid. **SPXW has no stock tape** →
-     `trade_greeks.underlying_price`. Both are as-of sampled onto a 1s grid.
+   - `underlying` (drives strike selection): SPY/QQQ/IWM = `stock_quote_1s` NBBO mid. **SPXW has no
+     stock tape** → `trade_greeks.underlying_price` (real SPX). As-of sampled onto a 1s grid.
+   - `chart` (what's charted): 1s OHLCV of `config.CHART_SYMBOL[root]` (SPXW → **SPY**) from the
+     per-trade `stock_trade_quote` tape; bars stamped at **second end** (`sec*1000+999`) so they're
+     visible only once the second is over. OHLC uses `LAST_SALE_CONDITIONS` (0 regular, 95 ISO) —
+     codes 96/4/124/2/… print up to $5 off the NBBO and painted false wicks; VWAP/profile use
+     `VWAP_CONDITIONS` (+115 odd lots); `v` counts all trades. Ships `vv/pv/p2v` sums centred on
+     `ref` so the client computes exact trade-level VWAP/σ.
    - Strike ladder = strikes **first seen at or before the open** (so later listings can't leak
      the day's range); ATM taken from the first underlying sample.
    - Size control, both no-look-ahead-safe: `--cadence 1s` keeps the last row per second with its
@@ -94,13 +104,19 @@ Three layers, data flowing one way:
      (gzipped, small in-memory LRU; `NoData` → 404 JSON `{error}`). Static files only from `web/`.
 2. **Replay UI (`web/`: `index.html`, `app.js`, `engine.js`; lightweight-charts 4.2.0 pinned on
    unpkg; no build step)** — **all look-ahead-sensitive logic lives in `web/engine.js`** (pure, UMD,
-   Node-tested): as-of binary search, bucket grid aligned to the open, partial bar from samples
-   ≤ clock, per-bucket option closes, `pickStrike` (mirrors the Python/live-tool rule). `app.js` is
-   DOM + charts: one master clock advanced on `requestAnimationFrame` (`clock += dt × speed`, dt
-   clamped to 250 ms), incremental `series.update()` going forward and a full `setData` rebuild on
-   any backwards move/seek/mode/selection change. Both panes use the same bucket grid (whitespace
-   points where empty) so logical ranges sync 1:1. Chart times are fake-UTC seconds that display
-   as ET wall clock (`Engine.chartTime`). **No forward interpolation** (SPEC §4B amended).
+   Node-tested): as-of binary search, bucket grid aligned to the open, partial bars from samples
+   ≤ clock, per-bucket closes, `pickStrike`, trade-level `vwapSeries`, developing `profileSeries`
+   (POC/VAH/VAL per second, 70% VA) and `profileAsOf` (histogram). `app.js`: two `Pane`s, each a
+   SOURCE (`chart` | `underlying` | `options` | `none`) at its own interval; View presets
+   (`tv`, `classic`, `chartopt`) just configure both panes. A pane is a list of layers
+   `{series, full(j), partial(k)}` rendered generically: incremental `series.update()` going
+   forward, full `setData` on any backwards move/seek/mode/selection change; a pane's chart is
+   destroyed and recreated on Load/config change (fresh axes). One master clock on
+   `requestAnimationFrame` (dt clamped to 250 ms). Volume profile = a series primitive
+   (`ProfilePrimitive`). σ-bands and VA lines are excluded from autoscale. Panes sync logical
+   ranges only when intervals match. Chart times are fake-UTC seconds displayed as ET wall clock.
+   The date picker is a custom calendar enabling only `/api/sessions` days (data-driven, so a
+   weekend-trading source would show weekends). **No forward interpolation** (SPEC §4B amended).
 3. **Mark + score** — key handling, pricing as above, journal each closed round-trip to
    `journal/trades.jsonl`.
 

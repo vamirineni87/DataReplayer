@@ -13,11 +13,17 @@
   <label>DTE <select id="dte"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label>
   <span class="group">
     <button id="prevDay" title="Previous available session">&lsaquo;</button>
-    <input id="date" type="date">
+    <span class="calwrap">
+      <input id="date" type="hidden">
+      <button id="dateBtn" class="datebtn" title="Pick a session (only days with data are enabled)">pick date</button>
+      <div id="cal" class="cal hidden"></div>
+    </span>
     <button id="nextDay" title="Next available session">&rsaquo;</button>
   </span>
   <button id="load" class="primary">Load</button>
-  <label>Interval <select id="interval"><option>1s</option><option>5s</option><option>15s</option><option selected>1m</option><option>5m</option></select></label>
+  <label>View <select id="view"></select></label>
+  <label class="chk"><input id="bands" type="checkbox" checked> VWAP σ</label>
+  <label class="chk"><input id="vp" type="checkbox" checked> Vol profile</label>
   <button id="mode" class="mode blind" title="Toggle blind / review (v)">BLIND</button>
   <span id="note" class="note"></span>
   <button id="helpBtn" class="right" title="Keyboard help (?)">?</button>
@@ -25,13 +31,22 @@
 
 <main>
   <section class="charts">
-    <div id="chartU" class="chart"></div>
-    <div id="chartO" class="chart small"></div>
+    <div id="pane0" class="pane">
+      <div class="phead"><select id="src0"><option value="chart">SPY trades</option><option value="underlying">Underlying</option><option value="options">Options C/P</option><option value="none">Hidden</option></select><select id="iv0"></select></div>
+      <div id="chart0" class="chart"></div>
+    </div>
+    <div id="pane1" class="pane">
+      <div class="phead"><select id="src1"><option value="chart">SPY trades</option><option value="underlying">Underlying</option><option value="options">Options C/P</option><option value="none">Hidden</option></select><select id="iv1"></select></div>
+      <div id="chart1" class="chart"></div>
+    </div>
   </section>
   <aside class="hud">
     <div id="clock" class="clock">--:--:--</div>
     <div class="row"><span id="playState">PAUSED</span><span id="speed">1×</span></div>
-    <div class="row"><span>Underlying</span><b id="uPx">—</b></div>
+    <div class="row"><span id="chartSym">SPY</span><b id="chartPx">—</b></div>
+    <div class="row"><span>VWAP</span><span id="vwapPx">—</span></div>
+    <div class="row muted"><span>VAL / POC / VAH</span><span id="vaInfo">—</span></div>
+    <div class="row" id="rootRow"><span id="rootSym">SPX</span><b id="rootPx">—</b></div>
     <div class="row muted"><span>Offset</span><span id="offset">0 (ATM)</span></div>
     <div class="opt call">
       <div class="row"><b>CALL</b><span id="cStrike">—</span></div>
@@ -66,13 +81,14 @@
     <h2>Keys</h2>
     <table>
       <tr><td>space</td><td>play / pause</td></tr>
-      <tr><td>&rarr; / &larr;</td><td>step one bar forward / back</td></tr>
+      <tr><td>&rarr; / &larr;</td><td>step one bar (finest pane) · Shift = coarsest pane</td></tr>
       <tr><td>[ / ]</td><td>speed down / up (0.25× … 60×, Max)</td></tr>
       <tr><td>Home / End</td><td>jump to open / close</td></tr>
       <tr><td>, / .</td><td>strike offset − / + (+ = OTM)</td></tr>
       <tr><td>v</td><td>toggle BLIND (future hidden) / REVIEW (whole day)</td></tr>
       <tr><td>g</td><td>jump to a time (type 10:32, Enter)</td></tr>
       <tr><td>?</td><td>this help · Esc closes</td></tr>
+      <tr><td>View</td><td>preset layouts; or pick Source + Interval per pane (→ Custom)</td></tr>
     </table>
     <p class="muted">Trading keys (c / p / x, qty ; ') arrive in Phase 3.</p>
   </div>
