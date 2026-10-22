@@ -58,6 +58,11 @@ cp config.example.json config.local.json      # then point it at your archive
 python -m replayer.server                     # http://127.0.0.1:8765/  (localhost only)
 ```
 
+To use it from other PCs on your network, run `python -m replayer.server --host 0.0.0.0` and open
+`http://<this-pc's-LAN-IP>:8765/`. There is **no authentication**: anyone on that network can see
+your journal and broker trades and add or delete practice trades. Only do this on a network you
+trust, and never forward the port to the internet.
+
 `config.local.json` is git-ignored. Every key can also be set as an environment variable:
 
 - `THETA_PARQUET`, `THETA_STOCK`: the archive roots;
@@ -98,7 +103,7 @@ double-click re-locks it); **⟫** jumps back to the newest bar; drag the divide
 
 Your practice journal (`journal/`), uploads, `order_history.json`, `config.local.json` and the
 cache are git-ignored and stay on your machine. The broker file is only ever read. The server
-binds to `127.0.0.1`.
+binds to `127.0.0.1` unless you pass `--host`.
 
 ## Docs
 

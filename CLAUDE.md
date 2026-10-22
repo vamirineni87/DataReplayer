@@ -51,7 +51,9 @@ scratch file and `ORDER_HISTORY` at a missing file, so no private trades appear 
 - Slice a session: `python -m replayer.slicer 2026-08-28 SPXW 0 [--cadence 1s|trade] [--window 15] [--out f.json] [--no-cache]`
   (summary on stderr; exit 2 = clean "no data"). Restart the server after slicer changes (it
   imports the code once) and bump `SLICER_VERSION`.
-- Server + UI: `python -m replayer.server [--port 8765]` → `http://127.0.0.1:8765/`.
+- Server + UI: `python -m replayer.server [--port 8765] [--host 0.0.0.0]` → `http://127.0.0.1:8765/`
+  (default localhost; `--host 0.0.0.0` = LAN, no auth — the operator runs it this way at
+  `http://192.168.4.76:8765/`).
   Deep link `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review&view=classic&speed=60&play=1`.
 - JS engine tests alone: `node tests/test_engine.js` (run_all bridges them via `test_engine_js`).
 - Visual check without a browser session: headless Chrome

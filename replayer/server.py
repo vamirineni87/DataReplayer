@@ -1,6 +1,9 @@
-"""Local replay server (stdlib http.server; localhost only).
+"""Local replay server (stdlib http.server; localhost by default).
 
-    python -m replayer.server [--port 8765]   ->  http://127.0.0.1:8765/
+    python -m replayer.server [--port 8765] [--host 0.0.0.0]   ->  http://127.0.0.1:8765/
+
+`--host 0.0.0.0` serves the LAN. There is no authentication: anyone on the network can then
+read the journal and broker trades and add / delete practice trades.
 
 Routes:
     GET /                       web/index.html
@@ -201,14 +204,20 @@ def make_server(host: str = '127.0.0.1', port: int = 8765) -> ThreadingHTTPServe
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description='Serve the DataReplayer UI on localhost.')
+    ap = argparse.ArgumentParser(description='Serve the DataReplayer UI (localhost by default).')
     ap.add_argument('--port', type=int, default=8765)
+    ap.add_argument('--host', default='127.0.0.1',
+                    help="interface to bind; 0.0.0.0 = every interface (LAN access, no auth)")
     a = ap.parse_args(argv)
     pruned = slicer.prune_cache()
     if pruned:
         print(f'pruned {pruned} stale cache file(s)', file=sys.stderr)
-    srv = make_server(port=a.port)
-    print(f'DataReplayer on http://127.0.0.1:{a.port}/  (Ctrl+C to stop)', file=sys.stderr)
+    srv = make_server(host=a.host, port=a.port)
+    shown = '127.0.0.1' if a.host in ('127.0.0.1', 'localhost') else a.host
+    print(f'DataReplayer on http://{shown}:{a.port}/  (Ctrl+C to stop)', file=sys.stderr)
+    if a.host not in ('127.0.0.1', 'localhost', '::1'):
+        print('WARNING: reachable from other machines; no authentication (journal + broker trades '
+              'are readable, practice trades editable)', file=sys.stderr)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
