@@ -35,7 +35,9 @@ only, long only, one position); `,` `.` offset, `;` `'` qty. Closed trades go to
 `journal/trades.jsonl` (private, git-ignored). The Journal panel (`j`) lists Practice, Real
 (from the companion repo's `order_history.json`, read-only) and Uploaded trades (drop a JSON in
 `order_history.json` shape or a practice export). Per-pane indicator chips; EMA/BB take a length
-and source timeframe. Wheel on the price axis zooms price; drag dividers to resize.
+and source timeframe (1s … 1h, or 1D for e.g. a 20-day EMA). Wheel on the price axis zooms price;
+drag dividers to resize. Trades draw entry→exit lines with P&L. 🎲 Random (`r`) loads a random
+session with the date hidden until Reveal.
 
 ## Stack
 Python (`pandas` + `pyarrow`) slicer + stdlib HTTP server; static HTML + TradingView

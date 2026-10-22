@@ -8,6 +8,7 @@ Routes:
     GET /api/sessions?root=&dte=        available session dates
     GET /api/slice?date=&root=&dte=&cadence=   session slice JSON (gzip if accepted)
     GET /api/history?date=&root=&days=  prior sessions at 1m (VWAP/σ, VP) for chart context
+    GET /api/daily?date=&root=&days=    prior daily bars (strictly before date) for 1D EMA/BB
     GET /api/quote?date=&root=&dte=&osi=&t=     exact bid/ask/mid as of t (full tick tape)
     GET/POST/DELETE /api/journal                practice round trips (journal/trades.jsonl)
     GET /api/broker?date=                       real round trips from order_history.json (read-only)
@@ -106,6 +107,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self._dispatch('DELETE')
 
+    def _daily(self, q):
+        root = q['root'].upper()
+        if root not in config.ROOTS:
+            raise NoData(f'root must be one of {", ".join(config.ROOTS)}')
+        self._json(200, history.daily_bars(root, date.fromisoformat(q['date']), int(q.get('days', '100'))))
+
     def _quote(self, q):
         self._json(200, trades.quote_at(date.fromisoformat(q['date']), q['root'].upper(), int(q['dte']),
                                         q['osi'], int(q['t'])))
@@ -175,6 +182,7 @@ Handler.ROUTES = {
     ('GET', '/api/slice'): Handler._slice,
     ('GET', '/api/history'): Handler._history,
     ('GET', '/api/quote'): Handler._quote,
+    ('GET', '/api/daily'): Handler._daily,
     ('GET', '/api/journal'): Handler._journal_get,
     ('POST', '/api/journal'): Handler._journal_post,
     ('DELETE', '/api/journal'): Handler._journal_delete,

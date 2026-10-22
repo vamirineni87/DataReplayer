@@ -48,3 +48,18 @@ def test_history_endpoint_and_cache():
             assert history.cache_path('SPY', PRIOR).exists()          # one cache file per day
         finally:
             srv.shutdown()
+
+
+def test_daily_bars_strictly_before_session():
+    import pandas as pd
+    from replayer import config
+    with FakeArchive():
+        d = config.THETA_STOCK / 'stock_eod' / 'SPY'
+        d.mkdir(parents=True)
+        days = pd.to_datetime(['2026-08-26 17:15', f'{PRIOR} 17:15', f'{SESSION} 17:15', '2026-08-31 17:15'])
+        pd.DataFrame({'created': days, 'open': [1.0, 2, 3, 4], 'high': [1.0, 2, 3, 4], 'low': [1.0, 2, 3, 4],
+                      'close': [10.0, 20.0, 30.0, 40.0], 'volume': [1, 1, 1, 1]}).to_parquet(d / 'eod_SPY_2026.parquet')
+        out = history.daily_bars('SPXW', SESSION, 100)
+    assert out['symbol'] == 'SPY'
+    assert [x['date'] for x in out['days']] == ['2026-08-26', str(PRIOR)]      # never the session or later
+    assert out['days'][-1]['c'] == 20.0

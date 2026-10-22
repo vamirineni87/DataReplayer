@@ -129,3 +129,33 @@ def history(root: str, session_date: date, n: int, use_cache: bool = True) -> di
     n = max(0, min(int(n), config.HISTORY_MAX_DAYS))
     return {'symbol': sym, 'row_size': config.vp_row_size(sym),
             'days': [get_day(sym, d, use_cache) for d in prior_days(sym, session_date, n)]}
+
+
+# ------------------------------------------------------------------ daily bars (1D indicators)
+
+def stock_eod_path(sym: str, year: int):
+    return config.THETA_STOCK / 'stock_eod' / sym / f'eod_{sym}_{year}.parquet'
+
+
+def daily_bars(root: str, session_date: date, n: int = 100) -> dict:
+    """The n daily bars of the chart symbol strictly BEFORE session_date (oldest first), from the
+    stock eod tier (read-only). The session's own daily close is the future, so it is never
+    included; the browser supplies today's developing close (price as of the clock)."""
+    import pandas as pd
+    sym = config.CHART_SYMBOL[root]
+    n = max(1, min(int(n), 400))
+    frames = []
+    for y in range(session_date.year, session_date.year - 3, -1):
+        p = stock_eod_path(sym, y)
+        if p.exists():
+            frames.append(pd.read_parquet(p, columns=['created', 'open', 'high', 'low', 'close', 'volume']))
+        if sum(len(f) for f in frames) > n + 5:
+            break
+    if not frames:
+        return {'symbol': sym, 'days': []}
+    d = pd.concat(frames)
+    d['date'] = d['created'].dt.date
+    d = d[(d['date'] < session_date) & (d['close'] > 0)].sort_values('date').drop_duplicates('date', keep='last').tail(n)
+    return {'symbol': sym, 'days': [{'date': r.date.isoformat(), 'o': float(r.open), 'h': float(r.high),
+                                     'l': float(r.low), 'c': float(r.close), 'v': int(r.volume)}
+                                    for r in d.itertuples()]}

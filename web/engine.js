@@ -326,6 +326,22 @@
     return out.sort((a, b) => a.time - b.time);
   }
 
+  /** Entry→exit connector segments (chart time + underlying price at each end, P&L label).
+   *  In blind mode a segment appears only once its EXIT is reached (no hint of the outcome). */
+  function tradeConnectors(trades, clock, reveal, timeOf, priceAt, style) {
+    const out = [];
+    for (const tr of trades) {
+      if (tr.entry_t == null || tr.exit_t == null) continue;
+      if (!reveal && tr.exit_t > clock) continue;
+      const p0 = priceAt(tr.entry_t), p1 = priceAt(tr.exit_t);
+      if (p0 == null || p1 == null) continue;
+      out.push({ t0: timeOf(tr.entry_t), p0, t1: timeOf(tr.exit_t), p1,
+        color: tr.pnl == null ? style.exit : tr.pnl >= 0 ? style.win : style.loss,
+        text: tr.pnl == null ? '' : `${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl).toFixed(0)}` });
+    }
+    return out;
+  }
+
   /** Live tool's OptionWindow.pick: nearest strike (ties -> lower), + offset = OTM, clamped. */
   function pickStrike(strikes, price, type, offset) {
     const s = strikes.slice().sort((a, b) => a - b);
@@ -367,6 +383,6 @@
   return {
     SPEEDS, INTERVALS, MAX_FRAME_MS,
     asOfIndex, valueAsOf, advanceClock, buildBuckets, bucketOf, barAsOf, fullBars,
-    bucketCloseValues, mtfBB, mtfEMA, canOpen, canClose, optionPnl, excursion, tradeMarkers, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
+    bucketCloseValues, mtfBB, mtfEMA, canOpen, canClose, optionPnl, excursion, tradeMarkers, tradeConnectors, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
   };
 });

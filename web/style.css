@@ -137,3 +137,6 @@ kbd { font: 10px ui-monospace, Consolas, monospace; color: var(--muted); border:
          padding: 8px 12px; max-width: 380px; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
 .toast.err { border-left-color: var(--down); } .toast.ok { border-left-color: var(--up); }
 .overlay.drop > div { border: 2px dashed var(--accent); border-radius: 12px; padding: 40px 60px; font-size: 18px; background: var(--panel); }
+
+.reveal { border-color: var(--warn); color: var(--warn); }
+button:disabled { opacity: .45; cursor: default; }

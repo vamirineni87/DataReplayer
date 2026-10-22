@@ -21,6 +21,8 @@
     <button id="nextDay" title="Next available session">&rsaquo;</button>
   </span>
   <button id="load" class="primary">Load</button>
+  <button id="randomBtn" title="Random session for this root/DTE, date hidden (r)">🎲 Random</button>
+  <button id="revealBtn" class="hidden reveal" title="Show the hidden date">Reveal</button>
   <label>View <select id="view"></select></label>
   <label title="Prior sessions on 1m+ SPY panes (each with its own VWAP and volume profile)">History
     <select id="histDays"><option value="0">0</option><option value="3">3d</option><option value="5" selected>5d</option><option value="10">10d</option></select></label>
@@ -136,6 +138,7 @@
       <tr><td>Home / End</td><td>jump to open / close</td></tr>
       <tr><td>v</td><td>toggle BLIND (future hidden) / REVIEW (whole day)</td></tr>
       <tr><td>g</td><td>jump to a time (type 10:32, Enter)</td></tr>
+      <tr><td>r</td><td>random session for this root/DTE with the date hidden (Reveal shows it)</td></tr>
       <tr><td>j</td><td>show / hide the trades list in the side panel</td></tr>
       <tr><td>?</td><td>this help · Esc closes</td></tr>
       <tr><td>mouse</td><td>wheel on the price axis zooms price · double-click the axis resets · drag dividers to resize</td></tr>

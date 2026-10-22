@@ -46,7 +46,9 @@
     upload: { entry: '#ba68c8', exit: '#ba68c8', win: '#ba68c8', loss: '#ba68c8' },
   };
   const HIST_MIN_IV = 60000;            // history only on 1m-or-coarser chart panes
-  const TF_CHOICES = ['chart', '1s', '5s', '15s', '1m', '2m', '5m'];
+  const TF_CHOICES = ['chart', '1s', '5s', '15s', '1m', '2m', '5m', '15m', '30m', '1h', '1D'];
+  const TF_MS = { ...E.INTERVALS, '15m': 900000, '30m': 1800000, '1h': 3600000 };
+  const DAILY_BARS = 100;               // prior daily closes fetched for 1D EMA/BB (warm-up)
   const defaultInd = () => ({
     vwap: true, bands: true, vp: true, vol: true,
     ema: { on: false, len: 20, tf: '1m' },
@@ -74,10 +76,11 @@
     data: null, meta: null, sessions: [], sessionSet: new Set(), byKey: new Map(),
     clock: 0, playing: false, speedIdx: 2, offset: 0, qty: 1,
     mode: 'blind',                       // always opens blind (operator preference)
-    view: 'tv', histDays: 5, hist: { days: [] },
+    view: 'tv', histDays: 5, hist: { days: [] }, daily: [],
     ind: null, rowSize: 0.05, profileIdx: null, profile: null,
     sel: { key: '' }, panes: [],
     pos: null,                           // open practice position
+    blindDate: false,                    // random-blind practice: the date is hidden everywhere
     journal: [], broker: [], uploads: [], brokerNote: '', tradesVer: 0,
     jtab: 'practice', show: { practice: true, broker: true, upload: true },
     layout: { split: null, hudW: 330, journal: true },
@@ -156,6 +159,49 @@
     }
   }
 
+  // Entry→exit connectors: dashed line between the underlying prices at entry and exit, with the
+  // trade's P&L in a tag at the exit end. A live (open) segment is dotted.
+  class ConnectorPrimitive {
+    constructor() {
+      this.segs = [];
+      this._view = { zOrder: () => 'top', renderer: () => ({ draw: (target) => this._draw(target) }) };
+    }
+    attached(p) { this._series = p.series; this._chart = p.chart; this._request = p.requestUpdate; }
+    detached() { this._series = null; this._chart = null; this._request = null; }
+    updateAllViews() {}
+    paneViews() { return [this._view]; }
+    set(segs) { this.segs = segs || []; if (this._request) this._request(); }
+    _draw(target) {
+      const s = this._series, ch = this._chart;
+      if (!s || !ch || !this.segs.length) return;
+      const ts = ch.timeScale();
+      target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
+        for (const g of this.segs) {
+          const x0 = ts.timeToCoordinate(g.t0), x1 = ts.timeToCoordinate(g.t1);
+          const y0 = s.priceToCoordinate(g.p0), y1 = s.priceToCoordinate(g.p1);
+          if (x0 == null || x1 == null || y0 == null || y1 == null) continue;
+          ctx.save();
+          ctx.strokeStyle = g.color; ctx.lineWidth = Math.max(1, 1.5 * hr);
+          ctx.setLineDash(g.live ? [2 * hr, 3 * hr] : [6 * hr, 4 * hr]);
+          ctx.beginPath(); ctx.moveTo(x0 * hr, y0 * vr); ctx.lineTo(x1 * hr, y1 * vr); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = g.color;
+          for (const [x, y] of [[x0, y0], [x1, y1]]) { ctx.beginPath(); ctx.arc(x * hr, y * vr, 3 * hr, 0, 2 * Math.PI); ctx.fill(); }
+          if (g.text) {
+            ctx.font = `bold ${11 * vr}px ui-monospace, Consolas, monospace`;
+            const w = ctx.measureText(g.text).width + 8 * hr, h = 16 * vr;
+            const bx = x1 * hr + 6 * hr, by = y1 * vr - h / 2;
+            ctx.fillStyle = g.color; ctx.globalAlpha = 0.9;
+            ctx.fillRect(bx, by, w, h);
+            ctx.globalAlpha = 1; ctx.fillStyle = '#0f1115';
+            ctx.textBaseline = 'middle'; ctx.fillText(g.text, bx + 4 * hr, by + h / 2);
+          }
+          ctx.restore();
+        }
+      });
+    }
+  }
+
   // Prior days bucketed to interval I: rows {time, date, ms, open, bar, vwap, sd, poc, vah, val, si}
   // plus one whitespace separator per day so lines (VWAP, bands, VA) break between sessions.
   function historyRows(days, I) {
@@ -210,6 +256,14 @@
       todayIdx: (e) => Hs + Math.max(0, Math.min(sb.n - 1, Math.floor((e - m.open_ms) / Isrc))),
       histIdx: (r, e) => key.get(`${r.date}|${r.open + Math.floor((e - r.open) / Isrc) * Isrc}`),
     };
+  }
+
+  // 1D source: prior daily closes (server: strictly before the session) then today, whose
+  // developing close is the price as of the display instant. A prior history day's index is
+  // its own daily bar, developing intraday the same way.
+  function dailySource() {
+    const closes = S.daily.map((d) => d.c), idx = new Map(S.daily.map((d, i) => [d.date, i]));
+    return { closes, todayIdx: () => closes.length, histIdx: (r) => idx.get(r.date) };
   }
 
   // ------------------------------------------------------------------ panes
@@ -305,9 +359,10 @@
       this.hrows = this.kind === 'chart' && I >= HIST_MIN_IV ? historyRows(S.hist.days, I) : [];
       this.chart = LC.createChart(this.host, {
         ...theme,
+        localization: { timeFormatter: (t) => fmtChartTime(t, I < 60000) },
         // We manage the view ourselves (follow mode); the library's auto-shift would march bars left.
         timeScale: { ...theme.timeScale, secondsVisible: I < 60000, barSpacing: I === 1000 ? 3 : 6, minBarSpacing: 0.3,
-          shiftVisibleRangeOnNewBar: false },
+          shiftVisibleRangeOnNewBar: false, tickMarkFormatter: tickMark },
       });
       // Panes at the same interval follow each other by TIME (history may differ per pane).
       this.chart.timeScale().subscribeVisibleTimeRangeChange((r) => {
@@ -322,6 +377,8 @@
       if (this.kind === 'chart') this.buildChart();
       else if (this.kind === 'underlying') this.buildUnderlying();
       else this.buildOptions();
+      this.conn = null;
+      if (this.kind !== 'options') { this.conn = new ConnectorPrimitive(); this.main.attachPrimitive(this.conn); }
       for (const L of this.layers) {
         const h = L.hist;
         L.histData = h ? this.hrows.map((r) => (r.sep ? { time: r.time } : withTime(r.time, h(r)))) : [];
@@ -386,7 +443,7 @@
 
       // Multi-timeframe EMA / BB: value at a display bar's end (or at the clock for the bar in
       // progress) = completed source closes before that instant + the price as of that instant.
-      const srcOf = (tf) => mtfSource(tf === 'chart' ? Idisp : E.INTERVALS[tf]);
+      const srcOf = (tf) => (tf === '1D' ? dailySource() : mtfSource(tf === 'chart' ? Idisp : TF_MS[tf]));
       const endOf = (j) => Math.min(this.b.starts[j] + Idisp - 1, S.meta.close_ms);
       const histEnd = (r) => Math.min(r.ms + Idisp - 1, r.close - 1);
       if (IND.ema.on) {
@@ -567,10 +624,24 @@
       const revealed = reveal ? -1 : sets.reduce((a, s) => a + s.trades.filter((t) => t.entry_t != null && t.entry_t <= S.clock).length
         + s.trades.filter((t) => t.exit_t != null && t.exit_t <= S.clock).length, 0);
       const key = `${S.mode}|${revealed}|${S.tradesVer}|${reveal ? k : ''}|${S.pos ? S.pos.entry_t : ''}`;
-      if (key === this.markerKey) return;
-      this.markerKey = key;
       const m = S.meta, I = E.INTERVALS[this.iv];
       const timeOf = (ms) => E.chartTime(m.session_date, m.open_ms + Math.max(0, Math.min(this.b.n - 1, Math.floor((ms - m.open_ms) / I))) * I);
+      const priceAt = this.kind === 'chart'
+        ? (ms) => E.valueAsOf(S.data.chart.t, S.data.chart.c, ms) ?? S.data.chart.o[0]
+        : (ms) => E.valueAsOf(S.data.underlying.t, S.data.underlying.p, ms) ?? S.data.underlying.p[0];
+      // live segment of an open practice position: entry → now, unrealized P&L
+      let live = null;
+      if (S.pos && S.pos.entry_t <= S.clock) {
+        const q = quoteNow(S.pos.osi);
+        const pnl = q ? E.optionPnl(S.pos.entry_mid, q.bid, S.pos.qty) : null;
+        live = { t0: timeOf(S.pos.entry_t), p0: priceAt(S.pos.entry_t), t1: timeOf(S.clock), p1: priceAt(S.clock), live: true,
+          color: pnl == null ? '#58a6ff' : pnl >= 0 ? '#3fb950' : '#f85149', text: pnl == null ? '' : `${pnl >= 0 ? '+' : '−'}$${Math.abs(pnl).toFixed(0)}` };
+      }
+      if (key === this.markerKey) { if (live && this.conn) this.conn.set(this.segs.concat([live])); return; }
+      this.markerKey = key;
+      this.segs = [];
+      for (const s of sets) this.segs = this.segs.concat(E.tradeConnectors(s.trades, S.clock, reveal, timeOf, priceAt, MARKER_STYLE[s.kind]));
+      if (this.conn) this.conn.set(live ? this.segs.concat([live]) : this.segs);
       let marks = [];
       for (const s of sets) marks = marks.concat(E.tradeMarkers(s.trades, S.clock, reveal, timeOf, MARKER_STYLE[s.kind]));
       if (S.pos && S.pos.entry_t <= S.clock) {
@@ -658,6 +729,25 @@
   }
 
   const withTime = (time, x) => (x ? { time, ...x } : { time });
+
+  // Chart times are fake-UTC seconds that read as ET wall clock. In random-blind practice the
+  // date is hidden everywhere: the session is "D", prior sessions "D-1", "D-2", ….
+  const pad2 = (x) => String(x).padStart(2, '0');
+  function dayLabel(iso) {
+    if (!S.blindDate) return iso;
+    if (iso === S.meta?.session_date) return 'D';
+    const i = S.hist.days.findIndex((d) => d.date === iso);
+    return i < 0 ? 'D-?' : `D-${S.hist.days.length - i}`;
+  }
+  function fmtChartTime(t, secs) {
+    const d = new Date(t * 1000);
+    const hm = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}${secs ? ':' + pad2(d.getUTCSeconds()) : ''}`;
+    return `${dayLabel(d.toISOString().slice(0, 10))} ${hm}`;
+  }
+  function tickMark(t, type) {
+    if (!S.blindDate || type > 2) return null;            // default labels unless the date is hidden
+    return dayLabel(new Date(t * 1000).toISOString().slice(0, 10));
+  }
 
   // ------------------------------------------------------------------ layout: splitters
   function applySplit() {
@@ -812,7 +902,7 @@
   function tradeSets() {
     const sets = [];
     if (S.show.practice) sets.push({ kind: 'practice', trades: S.journal.map((t) => ({ ...t, entry_price: t.entry_mid, exit_price: t.exit_bid, label: label(t) })) });
-    if (S.show.broker) sets.push({ kind: 'broker', trades: S.broker.map((t) => ({ ...t, label: label(t) })) });
+    if (S.show.broker && !S.blindDate) sets.push({ kind: 'broker', trades: S.broker.map((t) => ({ ...t, label: label(t) })) });
     if (S.show.upload) sets.push({ kind: 'upload', trades: S.uploads.map((t) => ({ ...t, label: label(t) })) });
     return sets;
   }
@@ -821,9 +911,9 @@
   let lastJournalKey = '';
   function renderJournal(force) {
     const tab = S.jtab;
-    const list = tab === 'practice' ? S.journal : tab === 'broker' ? S.broker : S.uploads;
+    const list = tab === 'practice' ? S.journal : tab === 'broker' ? (S.blindDate ? [] : S.broker) : S.uploads;
     const shown = tab === 'practice' ? list : list.filter(visibleInBlind);
-    const key = `${tab}|${S.tradesVer}|${shown.length}|${S.mode}|${S.show[tab]}|${S.pos ? 1 : 0}`;
+    const key = `${tab}|${S.tradesVer}|${shown.length}|${S.mode}|${S.show[tab]}|${S.pos ? 1 : 0}|${S.blindDate}`;
     if (!force && key === lastJournalKey) return;
     lastJournalKey = key;
     for (const b of document.querySelectorAll('.jtabs button')) b.classList.toggle('active', b.dataset.tab === tab);
@@ -853,7 +943,7 @@
     $('jList').innerHTML = rows.join('') || '<div class="jfoot muted">No trades.</div>';
     const hidden = list.length - shown.length;
     $('jFoot').textContent = (hidden > 0 ? `${hidden} later trade${hidden === 1 ? '' : 's'} hidden until the clock reaches them (BLIND). ` : '')
-      + (tab === 'broker' ? (S.brokerNote || 'From order_history.json (read-only).') : '')
+      + (tab === 'broker' ? (S.blindDate ? 'Hidden during random-blind practice — Reveal to show.' : (S.brokerNote || 'From order_history.json (read-only).')) : '')
       + (tab === 'upload' ? 'Drop or upload an order_history-style JSON or a practice export.' : '');
   }
 
@@ -969,7 +1059,8 @@
   function showMeta() {
     const m = S.meta;
     $('meta').textContent =
-      `${m.root} ${m.session_date} · ${m.dte}DTE → exp ${m.expiry}\n` +
+      (S.blindDate ? `${m.root} · ${m.dte}DTE · date hidden (Reveal to show)\n`
+        : `${m.root} ${m.session_date} · ${m.dte}DTE → exp ${m.expiry}\n`) +
       `ATM at open ${m.atm_strike_at_open} · ${m.strikes.length} strikes (±${m.strike_window})\n` +
       `chart: ${m.chart_symbol} trades · strikes from: ${m.underlying_source.split(' (')[0]}`;
   }
@@ -1085,6 +1176,7 @@
 
   function setDate(iso) {
     $('date').value = iso || '';
+    if (S.blindDate && iso) { $('dateBtn').textContent = '🎲 date hidden'; return; }
     if (!iso) { $('dateBtn').textContent = 'pick date'; return; }
     const d = new Date(`${iso}T00:00:00Z`);
     $('dateBtn').textContent = `${iso} ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()]}`;
@@ -1135,6 +1227,7 @@
       cal.month = next < first ? first : next > last ? last : next;     // stay within the data's range
       drawCal();
     } else if (b.dataset.iso) {
+      if (S.blindDate) setBlindDate(false);
       setDate(b.dataset.iso); $('note').textContent = ''; closeCal();
     }
   };
@@ -1147,16 +1240,18 @@
     S.pos = null;
     savePrefs();
     S.playing = false;
-    overlay(`Slicing ${root} ${date} ${dte}DTE from the archive… (first load of a session takes ~5–10 s; cached after)`);
+    overlay(`Slicing ${root} ${S.blindDate ? '(random day)' : date} ${dte}DTE from the archive… (first load of a session takes ~5–10 s; cached after)`);
     try {
-      const [data, hist, jr, br] = await Promise.all([
+      const [data, hist, jr, br, daily] = await Promise.all([
         getJson(`/api/slice?date=${date}&root=${root}&dte=${dte}&cadence=1s`),
         S.histDays > 0
           ? getJson(`/api/history?date=${date}&root=${root}&days=${S.histDays}`).catch(() => ({ days: [] }))
           : Promise.resolve({ days: [] }),
         getJson(`/api/journal?date=${date}&root=${root}`).catch(() => ({ trades: [] })),
         getJson(`/api/broker?date=${date}`).catch((e) => ({ trades: [], error: e.message })),
+        getJson(`/api/daily?date=${date}&root=${root}&days=${DAILY_BARS}`).catch(() => ({ days: [] })),
       ]);
+      S.daily = daily.days;
       S.data = data; S.meta = data.meta; S.hist = hist;
       S.journal = jr.trades; S.broker = br.trades; S.uploads = [];
       S.brokerNote = br.error ? `Real trades unavailable: ${br.error}` : `${br.trades.length} real round trip${br.trades.length === 1 ? '' : 's'} on ${date} from order_history.json (read-only).`;
@@ -1176,6 +1271,32 @@
     }
   }
 
+  // ------------------------------------------------------------------ random-blind practice
+  function setBlindDate(on) {
+    S.blindDate = on;
+    $('revealBtn').classList.toggle('hidden', !on);
+    for (const id of ['prevDay', 'nextDay', 'dateBtn']) $(id).disabled = on;
+    setDate($('date').value);
+    if (S.meta) { showMeta(); S.tradesVer++; renderJournal(true); }
+    for (const p of S.panes) if (p.chart) p.chart.applyOptions({ timeScale: { tickMarkFormatter: tickMark } });
+  }
+  async function randomSession() {
+    if (!S.sessions.length) return toast('No sessions for this root/DTE', 'err');
+    const pool = S.sessions.filter((d) => d !== $('date').value);
+    const pick = pool[Math.floor(Math.random() * pool.length)] || S.sessions[0];
+    $('note').textContent = '';
+    setBlindDate(true);
+    setDate(pick);
+    await loadSlice();
+    toast('Random session loaded — date hidden. Reveal when you\u2019re done.', 'ok');
+  }
+  function reveal() {
+    setBlindDate(false);
+    toast(`This was ${S.meta.session_date} (${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(S.meta.session_date + 'T00:00:00Z').getUTCDay()]})`, 'ok');
+  }
+  $('randomBtn').onclick = (ev) => { ev.target.blur(); randomSession(); };
+  $('revealBtn').onclick = (ev) => { ev.target.blur(); reveal(); };
+
   // ------------------------------------------------------------------ input
   const typing = () => ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)
     && document.activeElement.type !== 'range';
@@ -1193,6 +1314,7 @@
       c: () => openPos('C'), p: () => openPos('P'), x: () => closePos(),
       v: () => setMode(S.mode === 'blind' ? 'review' : 'blind'),
       g: () => $('goto').focus(),
+      r: () => randomSession(),
       j: () => { S.layout.journal = !S.layout.journal; applyColumns(); savePrefs(); },
       '?': () => $('help').classList.toggle('hidden'),
     }[ev.key];
@@ -1228,7 +1350,7 @@
     S.histDays = +ev.target.value; savePrefs(); ev.target.blur();
     if (S.data) loadSlice();                              // re-fetch history and rebuild (clock resets)
   };
-  $('root').onchange = $('dte').onchange = async (ev) => { ev.target.blur(); await loadSessions(); };
+  $('root').onchange = $('dte').onchange = async (ev) => { ev.target.blur(); if (S.blindDate) setBlindDate(false); await loadSessions(); };
   $('prevDay').onclick = () => shiftDay(-1);
   $('nextDay').onclick = () => shiftDay(1);
   $('load').onclick = (ev) => { ev.target.blur(); loadSlice(); };

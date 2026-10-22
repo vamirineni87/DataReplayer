@@ -118,6 +118,9 @@ Three layers, data flowing one way:
      carries pair correctly; the broker's OPENING expiration bookkeeping leg is ignored), and
      `parse_upload`. Routes: `/api/quote`, `/api/journal` (GET/POST/DELETE), `/api/broker`,
      `/api/parse-trades`.
+   - `history.daily_bars` + `/api/daily`: prior daily bars (stock eod tier, read-only) **strictly
+     before** the session — its eod `close` matches the 16:00 close within cents. Feeds the 1D
+     source for EMA/BB (`dailySource()` in app.js: prior closes + today's developing close).
    - `slicer.prune_cache()` (run at server start) deletes cache files from older
      `SLICER_VERSION`/`HISTORY_VERSION`; bump the matching version whenever output changes.
    - `replayer/server.py`: `/api/sessions?root=&dte=` (dates from `replayer/sessions.py`, which
@@ -156,7 +159,13 @@ Three layers, data flowing one way:
    before an open entry is clamped; REVIEW is refused while in a position. The trades list lives
    INSIDE the single right-hand side panel, under the option quotes / position (operator wants one
    panel, not a separate journal column); tabs:
-   Practice / Real (broker) / Uploaded; markers per source colour.
+   Practice / Real (broker) / Uploaded; markers per source colour. `ConnectorPrimitive` draws
+   entry→exit dashed lines at the underlying's prices with a P&L tag (`Engine.tradeConnectors`:
+   only once the exit is reached in BLIND); an open position draws a live dotted line to now.
+   EMA/BB source timeframes include 15m/30m/1h (`TF_MS`) and 1D.
+   **Random-blind practice** (`r` / 🎲): random session for the root/DTE with `S.blindDate`, which
+   hides the date in the date button, meta, Real tab, and chart time labels (`dayLabel` →
+   D, D-1, …) until Reveal. Prices still hint at the era.
 
 All trade overlays (broker history from the companion repo's `order_history.json`, uploaded
 CSV/JSON, practice marks) normalize to one canonical trade schema (SPEC §4C) so the renderer is

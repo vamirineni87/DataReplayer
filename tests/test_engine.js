@@ -246,6 +246,17 @@ tests.multiTimeframeMatchesSourceSeriesAtBarEnds = () => {
   assert.deepStrictEqual(E.mtfBB(closes, m, x, 20, 2), E.bbOf(win, 2));
 };
 
+tests.connectorsAppearOnlyOnceExitReached = () => {
+  const trades = [{ entry_t: 100, exit_t: 500, pnl: -40 }, { entry_t: 200, exit_t: null, pnl: null }];
+  const style = { entry: 'b', exit: 'g', win: 'w', loss: 'l' };
+  const priceAt = (ms) => ms / 100, timeOf = (ms) => ms;
+  assert.strictEqual(E.tradeConnectors(trades, 400, false, timeOf, priceAt, style).length, 0);  // outcome not yet known
+  const segs = E.tradeConnectors(trades, 500, false, timeOf, priceAt, style);
+  assert.strictEqual(segs.length, 1);                                   // open trade has no segment
+  assert.deepStrictEqual(segs[0], { t0: 100, p0: 1, t1: 500, p1: 5, color: 'l', text: '−$40' });
+  assert.strictEqual(E.tradeConnectors(trades, 0, true, timeOf, priceAt, style).length, 1);    // review
+};
+
 let failed = 0;
 for (const [name, fn] of Object.entries(tests)) {
   try { fn(); console.log(`PASS engine.${name}`); }
