@@ -16,8 +16,8 @@ phases (each independently runnable):
 1. **Slicer CLI** — done (`replayer/slicer.py`).
 2. **Smooth chart + clock** — done (`replayer/server.py`, `web/`).
 3. **MVP** — mostly done: `c`/`p`/`x` marking, exact re-pricing, P&L + MFE/MAE, journal panel,
-   real trades from `order_history.json`, JSON upload overlays. Not yet: CSV column mapping,
-   notes/tags editing, connectors between entry/exit markers.
+   real trades from `order_history.json`, JSON upload overlays, entry→exit connectors. Not yet:
+   CSV column mapping, notes/tags editing.
 4. Optional fidelity/power features (AUTO-delta, tick rounding, brackets, Schwab-recordings).
 
 Confirm the SPEC §10 open decisions with the operator before/while building (first instrument,
@@ -32,6 +32,10 @@ source/interval; never remove a view). Date picking shows only days with data. S
 open: data horizon (Schwab L1). Journal = standalone `journal/trades.jsonl` for now. Uploads = JSON in
 `order_history.json` shape (operator's choice) or a practice export; real trades are read
 (read-only) from the companion repo's `order_history.json` (path: `config.ORDER_HISTORY`).
+
+User-facing docs: `README.md` + `docs/GUIDE.md` (feature tour, screenshots in
+`docs/screenshots/`). Retake screenshots against a server with `REPLAYER_JOURNAL` pointing at a
+scratch file and `ORDER_HISTORY` at a missing file, so no private trades appear in them.
 
 ## Commands
 - All tests: `python tests/run_all.py`

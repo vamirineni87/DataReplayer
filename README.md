@@ -8,6 +8,10 @@ priced exactly as the live tool prices (entry at the option **mid**, exit at the
 
 > Training/replay only. **Not** a backtester, **not** a live trader, never places orders.
 
+![DataReplayer: SPY 1m + 1s with VWAP bands, volume profile, practice trades and the side panel](docs/screenshots/trading.png)
+
+**Feature tour with screenshots: [`docs/GUIDE.md`](docs/GUIDE.md).**
+
 ## Start here
 1. **[`docs/SPEC.md`](docs/SPEC.md)** — the full build spec (architecture, data, pricing contract, phases).
 2. **`T:\data\ThetaData\THETA_ARCHIVE_HANDOFF.md`** — authoritative data provenance; read before touching data.
@@ -25,19 +29,20 @@ python tests/run_all.py              # offline tests
 ```
 Deep link: `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review&view=tv`. Press `?` in the UI for keys.
 
-Views: **TradingView** (SPY 1m + SPY 1s, VWAP ±σ bands, volume, developing POC/VAH/VAL + volume
-profile — SPY is the chart proxy for SPXW), **Classic** (underlying + option C/P mids), **SPY 1m +
-options**, or **Custom** (pick Source + Interval per pane). Optional EMA20 / Bollinger(20,2), and
-**History** (0/3/5/10 prior days on 1m+ SPY panes, each with its own VWAP and volume profile).
+Views: **TradingView** (SPY 1m + SPY 1s, VWAP ±1.8/2/2.2/2.5/3σ bands, volume, tape speed,
+developing POC/VAH/VAL + volume profile — SPY is the chart proxy for SPXW), **Classic** (underlying +
+option C/P mids), **SPY 1m + options**, or **Custom** (pick Source + Interval per pane).
+**History** adds 0/3/5/10 prior days to 1m+ panes, each with its own VWAP and volume profile.
+Per-pane indicator chips; EMA / BB take a length and a source timeframe (1s … 1h, or 1D for e.g. a
+20-day EMA). The forming bar updates 4×/s with the tape (never ahead of the clock).
 
 Trading: `c` / `p` buy the offset-selected call / put at the mid, `x` closes at the bid (BLIND
-only, long only, one position); `,` `.` offset, `;` `'` qty. Closed trades go to
-`journal/trades.jsonl` (private, git-ignored). The Journal panel (`j`) lists Practice, Real
-(from the companion repo's `order_history.json`, read-only) and Uploaded trades (drop a JSON in
-`order_history.json` shape or a practice export). Per-pane indicator chips; EMA/BB take a length
-and source timeframe (1s … 1h, or 1D for e.g. a 20-day EMA). Wheel on the price axis zooms price;
-drag dividers to resize. Trades draw entry→exit lines with P&L. 🎲 Random (`r`) loads a random
-session with the date hidden until Reveal.
+only, long only, one position; re-priced at the exact ms); `,` `.` offset, `;` `'` qty. Trades draw
+entry→exit lines with P&L. The trades list lives in the right-hand panel under the quotes: Practice
+(`journal/trades.jsonl`, private, git-ignored; Export / Reset), Real (from the companion repo's
+`order_history.json`, read-only) and Uploaded (drop a JSON in `order_history.json` shape or a
+practice export). Price axis: scroll or drag to unlock (then the chart pans freely), **A** /
+double-click re-locks. 🎲 Random (`r`) loads a random session with the date hidden until Reveal.
 
 ## Stack
 Python (`pandas` + `pyarrow`) slicer + stdlib HTTP server; static HTML + TradingView
