@@ -36,3 +36,15 @@ CHART_SYMBOL = {'SPY': 'SPY', 'QQQ': 'QQQ', 'IWM': 'IWM', 'SPXW': 'SPY'}
 # prices); volume bars count every trade.
 LAST_SALE_CONDITIONS = (0, 95)
 VWAP_CONDITIONS = (0, 95, 115)
+
+# Volume-profile row height per chart symbol (shared by slicer meta, history, and the browser).
+VP_ROW_SIZE = {'IWM': 0.02}
+VP_ROW_DEFAULT = 0.05
+
+
+def vp_row_size(sym: str) -> float:
+    return VP_ROW_SIZE.get(sym, VP_ROW_DEFAULT)
+
+
+# Prior-day context on 1m+ chart panes.
+HISTORY_MAX_DAYS = 10

@@ -24,8 +24,9 @@ review default).
 Decided so far: SPXW 0DTE is the default/first-tuned root; 1s option cadence; both reveal modes,
 **always opening BLIND**. The operator trades SPXW but **charts SPY as the SPX proxy** and wants a
 TradingView-like layout (SPY 1m on top, SPY 1s below, each with session VWAP ±1.8/2/2.2/2.5/3σ,
-volume, developing POC/VAH/VAL + volume profile) — but **every view stays selectable** (presets +
-per-pane source/interval; never remove a view). Date picking shows only days with data. Still
+volume, developing POC/VAH/VAL + volume profile; optional EMA20 + Bollinger; 5–10 prior days of
+context on the 1m chart) — but **every view stays selectable** (presets + per-pane
+source/interval; never remove a view). Date picking shows only days with data. Still
 open: data horizon (Schwab L1), journal destination, upload formats (ask for a sample file).
 
 ## Commands
@@ -99,6 +100,12 @@ Three layers, data flowing one way:
    - Slices are cached as JSON in `cache/` keyed by args + `SLICER_VERSION` — **bump
      `SLICER_VERSION` whenever output changes.** Building one takes ~3–8 s cold.
    - Clean `NoData` errors: past 2026-08-28 horizon, non-trading day, missing expiry file.
+   - `replayer/history.py`: N prior sessions (`/api/history`, ≤ `HISTORY_MAX_DAYS`) as 1m bars with
+     each day's own VWAP/σ, developing POC/VAH/VAL and final profile, built from the same
+     `chart_bars` (same condition filter) and the same profile rule as `engine.profileSeries`;
+     one cache file per (symbol, day). Prior days are wholly in the past → always shown.
+   - `slicer.prune_cache()` (run at server start) deletes cache files from older
+     `SLICER_VERSION`/`HISTORY_VERSION`; bump the matching version whenever output changes.
    - `replayer/server.py`: `/api/sessions?root=&dte=` (dates from `replayer/sessions.py`, which
      scans expiry dir names once → `cache/expiries.json`) and `/api/slice?date=&root=&dte=&cadence=`
      (gzipped, small in-memory LRU; `NoData` → 404 JSON `{error}`). Static files only from `web/`.
@@ -113,7 +120,14 @@ Three layers, data flowing one way:
    forward, full `setData` on any backwards move/seek/mode/selection change; a pane's chart is
    destroyed and recreated on Load/config change (fresh axes). One master clock on
    `requestAnimationFrame` (dt clamped to 250 ms). Volume profile = a series primitive
-   (`ProfilePrimitive`). σ-bands and VA lines are excluded from autoscale. Panes sync logical
+   (`ProfilePrimitive`: prior days drawn inside their own span, today's anchored at its open or
+   the left edge). σ-bands, VA and BB lines are excluded from autoscale. Colors follow the
+   operator's TradingView: **blue VWAP, orange 2σ**, gray other bands. Chart panes at ≥1m prepend
+   history rows (one whitespace separator per day breaks the lines); EMA20/BB(20,2) run over
+   history+today closes, in-progress bar stepped from the last closed state. View: the library's
+   `shiftVisibleRangeOnNewBar` is off; `initialView()` (no history → first bar mid-pane; history →
+   today's open near the left) and `follow()` (slide only while the newest bar is being watched;
+   restore the range after `setData`, which otherwise keeps the right gap and shoves bars off). Panes sync logical
    ranges only when intervals match. Chart times are fake-UTC seconds displayed as ET wall clock.
    The date picker is a custom calendar enabling only `/api/sessions` days (data-driven, so a
    weekend-trading source would show weekends). **No forward interpolation** (SPEC §4B amended).

@@ -24,6 +24,10 @@
   <label>View <select id="view"></select></label>
   <label class="chk"><input id="bands" type="checkbox" checked> VWAP σ</label>
   <label class="chk"><input id="vp" type="checkbox" checked> Vol profile</label>
+  <label class="chk"><input id="ema" type="checkbox"> EMA20</label>
+  <label class="chk"><input id="bb" type="checkbox"> BB</label>
+  <label title="Prior sessions on 1m+ SPY panes (each with its own VWAP and volume profile)">History
+    <select id="histDays"><option value="0">0</option><option value="3">3d</option><option value="5" selected>5d</option><option value="10">10d</option></select></label>
   <button id="mode" class="mode blind" title="Toggle blind / review (v)">BLIND</button>
   <span id="note" class="note"></span>
   <button id="helpBtn" class="right" title="Keyboard help (?)">?</button>

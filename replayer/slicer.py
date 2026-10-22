@@ -33,7 +33,7 @@ import pandas as pd
 from . import config
 from .market_calendar import is_trading_day, next_trading_days, rth_bounds
 
-SLICER_VERSION = 4
+SLICER_VERSION = 5
 ET = ZoneInfo('America/New_York')
 DAY_MS = 86_400_000
 
@@ -360,6 +360,7 @@ def build_slice(session_date: date, root: str, dte: int, cadence: str = '1s',
             'ladder_source': ladder_source,
             'underlying_source': usource,
             'chart_symbol': chart['symbol'],
+            'vp_row_size': config.vp_row_size(chart['symbol']),
             'option_rows_session': int(len(opts)),
             'option_rows_emitted': int(sum(len(c['t']) for c in contracts.values())),
         },
@@ -371,6 +372,22 @@ def build_slice(session_date: date, root: str, dte: int, cadence: str = '1s',
 
 def cache_path(session_date: date, root: str, dte: int, cadence: str, window: int) -> Path:
     return config.CACHE_DIR / f'{root}_{session_date.isoformat()}_{dte}dte_{cadence}_w{window}_v{SLICER_VERSION}.json'
+
+
+def prune_cache() -> int:
+    """Delete cached slices/history built by older code versions (cache/ only)."""
+    import re
+    from .history import HISTORY_VERSION
+    slice_re = re.compile(r'^[A-Z]+_\d{4}-\d{2}-\d{2}_\ddte_.*_v(\d+)\.json$')
+    hist_re = re.compile(r'^hist_.*_v(\d+)_(\d+)\.json$')
+    n = 0
+    if config.CACHE_DIR.exists():
+        for p in config.CACHE_DIR.glob('*.json'):
+            m, h = slice_re.match(p.name), hist_re.match(p.name)
+            if (m and int(m.group(1)) != SLICER_VERSION) or                     (h and (int(h.group(1)), int(h.group(2))) != (HISTORY_VERSION, SLICER_VERSION)):
+                p.unlink()
+                n += 1
+    return n
 
 
 def get_slice_json(session_date: date, root: str, dte: int, cadence: str = '1s',

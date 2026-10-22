@@ -27,7 +27,8 @@ Deep link: `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review&view=tv`. Pres
 
 Views: **TradingView** (SPY 1m + SPY 1s, VWAP ±σ bands, volume, developing POC/VAH/VAL + volume
 profile — SPY is the chart proxy for SPXW), **Classic** (underlying + option C/P mids), **SPY 1m +
-options**, or **Custom** (pick Source + Interval per pane).
+options**, or **Custom** (pick Source + Interval per pane). Optional EMA20 / Bollinger(20,2), and
+**History** (0/3/5/10 prior days on 1m+ SPY panes, each with its own VWAP and volume profile).
 
 ## Stack
 Python (`pandas` + `pyarrow`) slicer + stdlib HTTP server; static HTML + TradingView

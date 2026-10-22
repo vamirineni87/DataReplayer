@@ -177,6 +177,31 @@ tests.ohlcvAsOfNeverUsesUnfinishedSeconds = () => {
   }
 };
 
+tests.emaSeedsWithSmaAndCarriesAcrossGaps = () => {
+  const x = [1, 2, null, 3, 4, 5];
+  const e = E.emaSeries(x, 3);
+  assert.deepStrictEqual(e.slice(0, 3), [null, null, null]);
+  assert.ok(near(e[3], 2));                                   // SMA(1,2,3)
+  assert.ok(near(e[4], 2 + 0.5 * (4 - 2)));                   // alpha = 2/(3+1)
+  assert.ok(near(e[5], e[4] + 0.5 * (5 - e[4])));
+  assert.ok(near(E.emaStep(e[4], 5, 3), e[5]));               // in-progress bar = one step from prior state
+  assert.strictEqual(E.emaStep(null, 5, 3), null);
+};
+
+tests.bollingerPopulationSigmaAndPartialWindow = () => {
+  const x = [1, 2, 3, null, 4];
+  const bb = E.bbSeries(x, 3, 2);
+  assert.strictEqual(bb[1], null);
+  const m = 2, sd = Math.sqrt(((1 - 2) ** 2 + 0 + (3 - 2) ** 2) / 3);
+  assert.ok(near(bb[2].mid, m) && near(bb[2].up, m + 2 * sd) && near(bb[2].lo, m - 2 * sd));
+  assert.strictEqual(bb[3], null);                            // empty bucket: no value
+  assert.ok(near(bb[4].mid, 3));                              // window 2,3,4
+  // in-progress bar: last period-1 closed values + current close
+  const win = E.lastValues(x, 3, 2).concat([4]);
+  assert.deepStrictEqual(win, [2, 3, 4]);
+  assert.ok(near(E.bbOf(win, 2).mid, bb[4].mid));
+};
+
 let failed = 0;
 for (const [name, fn] of Object.entries(tests)) {
   try { fn(); console.log(`PASS engine.${name}`); }

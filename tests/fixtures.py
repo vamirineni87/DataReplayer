@@ -90,6 +90,20 @@ def spy_trade_rows():
                          'size': [r[3] for r in rows], 'condition': [r[4] for r in rows], 'symbol': 'SPY'})
 
 
+def spy_prior_trade_rows():
+    """PRIOR-day SPY tape: 3 minutes of regular prints + one off-price avg-price print."""
+    rows = []
+    seq = 0
+    for mi, (px, v) in enumerate([(498.0, 100), (499.0, 300), (500.0, 100)]):
+        for s in (5, 35):
+            seq += 1
+            rows.append((f'09:{30 + mi}:{s:02d}.000', seq, px + (0.02 if s == 35 else 0), v, 0))
+    rows.append(('09:31:40.000', 99, 480.0, 5000, 96))      # never touches OHLC / VWAP / profile
+    return pd.DataFrame({'trade_timestamp': pd.to_datetime([f'{PRIOR} {t}' for t, *_ in rows]),
+                         'sequence': [r[1] for r in rows], 'price': [r[2] for r in rows],
+                         'size': [r[3] for r in rows], 'condition': [r[4] for r in rows], 'symbol': 'SPY'})
+
+
 def spy_tick_rows():
     rows = []
     for k in range(495, 506):
@@ -119,6 +133,7 @@ class FakeArchive:
         tq = config.THETA_STOCK / 'stock_trade_quote' / 'SPY' / '2026'
         tq.mkdir(parents=True)
         spy_trade_rows().to_parquet(tq / f'trade_quote_SPY_{SESSION}.parquet')
+        spy_prior_trade_rows().to_parquet(tq / f'trade_quote_SPY_{PRIOR}.parquet')
         self.root = root
         return self
 

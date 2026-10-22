@@ -7,6 +7,7 @@ Routes:
     GET /<file>                 static files under web/
     GET /api/sessions?root=&dte=        available session dates
     GET /api/slice?date=&root=&dte=&cadence=   session slice JSON (gzip if accepted)
+    GET /api/history?date=&root=&days=  prior sessions at 1m (VWAP/σ, VP) for chart context
 """
 import argparse
 import gzip
@@ -19,7 +20,7 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import config, sessions, slicer
+from . import config, history, sessions, slicer
 from .slicer import NoData
 
 WEB_DIR = (config.PROJECT_DIR / 'web').resolve()
@@ -75,6 +76,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._sessions(q)
             if u.path == '/api/slice':
                 return self._slice(q)
+            if u.path == '/api/history':
+                return self._history(q)
             return self._static(u.path)
         except NoData as e:
             return self._json(404, {'error': str(e)})
@@ -102,6 +105,18 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(200, gzip.decompress(body), 'application/json')
 
+    def _history(self, q):
+        d = date.fromisoformat(q['date'])
+        root = q['root'].upper()
+        if root not in config.ROOTS:
+            raise NoData(f'root must be one of {", ".join(config.ROOTS)}')
+        body = gzip.compress(json.dumps(history.history(root, d, int(q.get('days', '5'))),
+                                        separators=(',', ':')).encode('utf-8'), 6)
+        if 'gzip' in self.headers.get('Accept-Encoding', ''):
+            self._send(200, body, 'application/json', gzipped=True)
+        else:
+            self._send(200, gzip.decompress(body), 'application/json')
+
     def _static(self, path: str):
         rel = 'index.html' if path in ('', '/') else path.lstrip('/')
         target = (WEB_DIR / rel).resolve()
@@ -121,6 +136,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description='Serve the DataReplayer UI on localhost.')
     ap.add_argument('--port', type=int, default=8765)
     a = ap.parse_args(argv)
+    pruned = slicer.prune_cache()
+    if pruned:
+        print(f'pruned {pruned} stale cache file(s)', file=sys.stderr)
     srv = make_server(port=a.port)
     print(f'DataReplayer on http://127.0.0.1:{a.port}/  (Ctrl+C to stop)', file=sys.stderr)
     try:

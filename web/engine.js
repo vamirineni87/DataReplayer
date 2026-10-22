@@ -202,6 +202,63 @@
     return { rows, max, rowSize, poc: (base + p) * rowSize, vah: (base + hi) * rowSize, val: (base + lo) * rowSize };
   }
 
+  // ---------------------------------------------------------------- EMA / Bollinger
+  // Causal over a bar-close sequence with gaps (null = empty bucket: state carries, no value).
+  // EMA seeds with the SMA of the first `period` closes. BB = SMA ± mult × population σ
+  // (TradingView's ta.stdev is the biased/population form).
+
+  /** EMA state after each index (carried across nulls; null until seeded). */
+  function emaSeries(x, period) {
+    const a = 2 / (period + 1), out = new Array(x.length);
+    let ema = null, seedSum = 0, seedN = 0;
+    for (let i = 0; i < x.length; i++) {
+      const v = x[i];
+      if (v != null) {
+        if (ema == null) {
+          seedSum += v; seedN++;
+          if (seedN === period) ema = seedSum / period;
+        } else ema += a * (v - ema);
+      }
+      out[i] = ema;
+    }
+    return out;
+  }
+
+  /** One EMA step from a previous state (for the in-progress bar). */
+  function emaStep(prev, v, period) {
+    return prev == null || v == null ? null : prev + (2 / (period + 1)) * (v - prev);
+  }
+
+  /** The last n non-null values of x at indices <= end (oldest first). */
+  function lastValues(x, end, n) {
+    const out = [];
+    for (let i = Math.min(end, x.length - 1); i >= 0 && out.length < n; i--) if (x[i] != null) out.push(x[i]);
+    return out.reverse();
+  }
+
+  function bbOf(win, mult) {
+    const n = win.length;
+    let s = 0;
+    for (const v of win) s += v;
+    const m = s / n;
+    let q = 0;
+    for (const v of win) q += (v - m) * (v - m);
+    const sd = Math.sqrt(q / n);
+    return { mid: m, up: m + mult * sd, lo: m - mult * sd };
+  }
+
+  /** Bollinger at each index with a value (null before `period` closes exist). */
+  function bbSeries(x, period, mult) {
+    const out = new Array(x.length).fill(null), win = [];
+    for (let i = 0; i < x.length; i++) {
+      if (x[i] == null) continue;
+      win.push(x[i]);
+      if (win.length > period) win.shift();
+      if (win.length === period) out[i] = bbOf(win, mult);
+    }
+    return out;
+  }
+
   /** Live tool's OptionWindow.pick: nearest strike (ties -> lower), + offset = OTM, clamped. */
   function pickStrike(strikes, price, type, offset) {
     const s = strikes.slice().sort((a, b) => a - b);
@@ -243,6 +300,6 @@
   return {
     SPEEDS, INTERVALS, MAX_FRAME_MS,
     asOfIndex, valueAsOf, advanceClock, buildBuckets, bucketOf, barAsOf, fullBars,
-    bucketCloseValues, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
+    bucketCloseValues, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
   };
 });
