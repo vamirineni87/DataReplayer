@@ -9,7 +9,7 @@ priced exactly as the live tool prices (entry at the option **mid**, exit at the
 > Training/replay only. **Not** a backtester, **not** a live trader, never places orders.
 
 ## Start here
-1. **`SPEC.md`** — the full build spec (architecture, data, pricing contract, phases).
+1. **[`docs/SPEC.md`](docs/SPEC.md)** — the full build spec (architecture, data, pricing contract, phases).
 2. **`T:\data\ThetaData\THETA_ARCHIVE_HANDOFF.md`** — authoritative data provenance; read before touching data.
 3. **`CLAUDE.md`** — build guardrails (read-only archives, privacy, tests).
 

@@ -7,11 +7,11 @@ trading day from the operator's ThetaData tick archive and practice 0–2 DTE lo
 with the live tool's keys (`c` buy call / `p` buy put / `x` close), priced exactly like the live
 tool. Training/replay only — not a backtester, not a live trader.
 
-Read **`SPEC.md`** (full spec) and **`T:\data\ThetaData\THETA_ARCHIVE_HANDOFF.md`**
+Read **`docs/SPEC.md`** (full spec) and **`T:\data\ThetaData\THETA_ARCHIVE_HANDOFF.md`**
 (data provenance) before writing code.
 
 ## Status
-As of 2026-10-22 the repo holds only `SPEC.md`, `README.md`, and this file — no code yet. Git remote:
+As of 2026-10-22 the repo holds only `docs/SPEC.md`, `README.md`, and this file — no code yet. Git remote:
 `https://github.com/vamirineni87/DataReplayer` (private). Build in the SPEC §7 phases (each independently runnable):
 1. **Slicer CLI** — `2026-08-28 SPXW 0` → compact JSON (no UI).
 2. **Smooth chart + clock** — served `index.html`, replay engine, blind reveal. No trading.
