@@ -15,8 +15,21 @@ known at that moment. Those two properties set almost every decision below.
 
 - **Entry** = the option's `mid_price` as of the clock. **Exit** = its `bid` as of the clock.
 - `pnl = (exit_bid − entry_mid) × 100 × qty`.
-- **Long only, one position at a time.** `c` and `p` are refused while you hold a position; `x`
-  is refused while you are flat. Nothing is ever sold to open.
+- **Long only, one position at a time, scale-in allowed.**
+  - Pressing the **same side** again while holding a position **adds** `qty` of the **held**
+    contract at its current mid. This applies even if the offset now points at a different
+    strike.
+  - The **opposite side** is refused until you close.
+  - `x` closes the whole position at the bid, and is refused while you are flat.
+  - Nothing is ever sold to open, and there are no partial closes.
+- **Scale-in math.**
+  - Entry is the quantity-weighted average of the fills, so
+    `pnl = (exit_bid − avg) × 100 × total qty`, which equals the sum of each fill's own P&L.
+  - MFE and MAE count each fill only from the moment it was made, so an add never makes earlier
+    excursions look bigger.
+  - Every fill is re-priced to the exact tick, gets its own chart arrow, and is stored in the
+    journal row's `fills`.
+  - Seeking can't go before the last fill.
 - **Strike pick:** take the nearest strike to the current underlying, then shift it by
   `offset`, where + means OTM (calls go up, puts go down). The result is clamped to the shipped
   ladder.
@@ -53,7 +66,7 @@ shortcut leaks future data.
 | Trade markers and P&L lines | an exit marker or connector appears only once the clock reaches it | seeing how a trade ended |
 | Tape speed | finished seconds only | |
 | REVIEW mode | an explicit toggle (`v`); refused while holding a position, and trades are refused in REVIEW | marking trades with the whole day visible |
-| Seeking | can't seek before an open position's entry | un-doing a trade by rewinding |
+| Seeking | can't seek before an open position's last fill | un-doing a trade, or an add, by rewinding |
 | Random blind | the date is hidden in the date button, meta line, Real tab and chart labels (D, D-1, …) | recognising the session. Price levels still hint at the era; that is accepted. |
 
 There is **no forward interpolation**: SPEC §4B originally proposed it for smoothness, and it

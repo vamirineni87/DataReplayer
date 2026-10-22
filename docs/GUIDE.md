@@ -11,6 +11,9 @@ A tour of the replay UI with screenshots. All shots are real SPXW 0DTE sessions 
 - **`c` / `p`** buy the offset-selected call / put at the option **mid**; **`x`** closes at the
   **bid** — the live hotkey tool's pricing, so practice fills equal reality. Long only, one
   position at a time, BLIND mode only.
+- **Scale in:** while holding a put, `p` again (the button reads **Add P**) adds `qty` more of
+  the same contract at the mid. The entry becomes the weighted average, each add gets its own
+  chart arrow (`+1 @19.90`), and `c` is refused until you close with `x`.
 - Every fill is **re-priced server-side at the exact millisecond** from the full tick tape.
 - **Offset** (`,` `.`) shifts the strike from ATM (+ = OTM); **Qty** with `;` `'`.
 - The side panel shows the clock, SPY / VWAP (σ distance) / tape speed / VA / SPX, the CALL and PUT

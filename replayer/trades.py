@@ -101,7 +101,19 @@ def journal_append(rec: dict) -> dict:
     qty = int(rec['qty'])
     if qty < 1:
         raise ValueError('qty must be >= 1')
-    if int(rec['exit_t']) < int(rec['entry_t']):
+    fills = rec.get('fills') or None
+    if fills is not None:                                        # scaled in: fills are the truth
+        fills = [{'t': math.floor(float(f['t'])), 'mid': round(float(f['mid']), 4), 'qty': int(f['qty'])}
+                 for f in fills]
+        if any(f['qty'] < 1 for f in fills):
+            raise ValueError('fill qty must be >= 1')
+        fills.sort(key=lambda f: f['t'])
+        qty = sum(f['qty'] for f in fills)
+        rec = {**rec, 'qty': qty, 'entry_t': fills[0]['t'],
+               'entry_mid': sum(f['mid'] * f['qty'] for f in fills) / qty}
+        if len(fills) == 1:
+            fills = None                                         # plain trade: keep the old shape
+    if int(rec['exit_t']) < int(rec['entry_t']) or (fills and int(rec['exit_t']) < fills[-1]['t']):
         raise ValueError('exit before entry')
     clean = {f: rec[f] for f in JOURNAL_FIELDS}
     clean.update({
@@ -114,6 +126,7 @@ def journal_append(rec: dict) -> dict:
         'pnl': round((float(rec['exit_bid']) - float(rec['entry_mid'])) * 100 * qty, 2),
         'offset': rec.get('offset'), 'mfe': rec.get('mfe'), 'mae': rec.get('mae'),
         'note': rec.get('note', ''), 'tag': rec.get('tag', ''),
+        **({'fills': fills} if fills else {}),
         'created_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
     })
     path = config.JOURNAL_PATH

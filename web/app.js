@@ -720,7 +720,7 @@
       const sets = tradeSets();
       const revealed = reveal ? -1 : sets.reduce((a, s) => a + s.trades.filter((t) => t.entry_t != null && t.entry_t <= S.clock).length
         + s.trades.filter((t) => t.exit_t != null && t.exit_t <= S.clock).length, 0);
-      const key = `${S.mode}|${revealed}|${S.tradesVer}|${reveal ? k : ''}|${S.pos ? S.pos.entry_t : ''}`;
+      const key = `${S.mode}|${revealed}|${S.tradesVer}|${reveal ? k : ''}|${S.pos ? S.pos.entry_t + ':' + S.pos.fills.length : ''}`;
       const m = S.meta, I = E.INTERVALS[this.iv];
       const timeOf = (ms) => E.chartTime(m.session_date, m.open_ms + Math.max(0, Math.min(this.b.n - 1, Math.floor((ms - m.open_ms) / I))) * I);
       const priceAt = this.kind === 'chart'
@@ -741,9 +741,12 @@
       if (this.conn) this.conn.set(live ? this.segs.concat([live]) : this.segs);
       let marks = [];
       for (const s of sets) marks = marks.concat(E.tradeMarkers(s.trades, S.clock, reveal, timeOf, MARKER_STYLE[s.kind]));
-      if (S.pos && S.pos.entry_t <= S.clock) {
-        marks.push({ time: timeOf(S.pos.entry_t), position: 'belowBar', shape: 'arrowUp', color: '#58a6ff',
-          text: `${S.pos.type}${S.pos.strike} ×${S.pos.qty} @${S.pos.entry_mid.toFixed(2)}` });
+      if (S.pos) {
+        S.pos.fills.forEach((f, i) => {
+          if (f.t > S.clock) return;
+          marks.push({ time: timeOf(f.t), position: 'belowBar', shape: 'arrowUp', color: '#58a6ff',
+            text: i ? `+${f.qty} @${f.mid.toFixed(2)}` : `${S.pos.type}${S.pos.strike} ×${f.qty} @${f.mid.toFixed(2)}` });
+        });
       }
       if (reveal) marks.push({ time: this.times[k], position: 'aboveBar', color: '#d29922', shape: 'circle', text: 'now' });
       marks.sort((a, b) => a.time - b.time);
@@ -942,23 +945,39 @@
     return getJson(`/api/quote?date=${m.session_date}&root=${m.root}&dte=${m.dte}&osi=${encodeURIComponent(osi)}&t=${t}`);
   }
 
+  // Position = one contract + its fills. The same side again ADDS to it (same contract, at the
+  // mid, whatever the current offset); entry = quantity-weighted average of the fills.
+  function syncPos(pos) {
+    const a = E.avgEntry(pos.fills);
+    pos.qty = a.qty; pos.entry_mid = a.mid; pos.entry_t = a.t;
+    pos.exact = pos.fills.every((f) => f.exact);
+  }
   async function openPos(type) {
     if (!S.data) return;
-    const why = E.canOpen(S.pos, S.mode);
+    const why = E.canOpen(S.pos, S.mode, type);
     if (why) return toast(why, 'err');
-    const osi = S.sel[type];
+    const adding = !!S.pos;
+    const osi = adding ? S.pos.osi : S.sel[type];
     if (!osi) return toast(`No ${type === 'C' ? 'call' : 'put'} contract at this offset`, 'err');
     const q = quoteNow(osi);
     if (!q) return toast('No quote yet for that contract', 'err');
     const c = S.data.contracts[osi], t = Math.floor(S.clock);   // clock is fractional mid-playback
-    S.pos = { osi, type, strike: c.strike, qty: S.qty, entry_t: t, entry_mid: q.mid, offset: S.offset, exact: false };
+    const fill = { t, mid: q.mid, qty: S.qty, exact: false };
+    if (adding) S.pos.fills.push(fill);
+    else S.pos = { osi, type, strike: c.strike, offset: S.offset, fills: [fill] };
+    const pos = S.pos;
+    syncPos(pos);
     S.tradesVer++;
-    toast(`BUY ${type} ${c.strike} ×${S.qty} @ ${q.mid.toFixed(2)} (mid) · ${E.fmtClock(t)}`, 'ok');
+    toast(adding
+      ? `ADD ${type} ${c.strike} ×${S.qty} @ ${q.mid.toFixed(2)} (mid) → ×${pos.qty} avg ${pos.entry_mid.toFixed(2)}`
+      : `BUY ${type} ${c.strike} ×${S.qty} @ ${q.mid.toFixed(2)} (mid) · ${E.fmtClock(t)}`, 'ok');
     try {
       const x = await exactQuote(osi, t);
-      if (S.pos && S.pos.entry_t === t) {
-        if (Math.abs(x.mid - S.pos.entry_mid) > 1e-9) toast(`Entry re-priced to exact tick: ${x.mid.toFixed(2)}`);
-        S.pos.entry_mid = x.mid; S.pos.exact = true; S.tradesVer++;
+      if (S.pos === pos && pos.fills.includes(fill)) {
+        if (Math.abs(x.mid - fill.mid) > 1e-9) toast(`Fill re-priced to exact tick: ${x.mid.toFixed(2)}`);
+        fill.mid = x.mid; fill.exact = true;
+        syncPos(pos);
+        S.tradesVer++;
       }
     } catch (e) { toast(`Exact re-price failed (${e.message}); keeping ${q.mid.toFixed(2)}`, 'err'); }
   }
@@ -972,12 +991,13 @@
     try { q = await exactQuote(pos.osi, t); } catch (e) { toast(`Exact re-price failed (${e.message}); using 1s data`, 'err'); }
     if (!q) return toast('No bid available to close against', 'err');
     const c = S.data.contracts[pos.osi];
-    const exc = E.excursion(c.t, c.bid, pos.entry_t, t, pos.entry_mid, pos.qty);
+    const exc = E.excursion(c.t, c.bid, pos.fills, t);
     const m = S.meta;
     const rec = {
       session_date: m.session_date, root: m.root, dte: m.dte, expiry: m.expiry, osi: pos.osi, strike: pos.strike,
       type: pos.type, qty: pos.qty, entry_t: pos.entry_t, entry_mid: pos.entry_mid, exit_t: t, exit_bid: q.bid,
       offset: pos.offset, mfe: Math.round(exc.mfe * 100) / 100, mae: Math.round(exc.mae * 100) / 100,
+      fills: pos.fills.map((f) => ({ t: f.t, mid: f.mid, qty: f.qty })),
     };
     S.pos = null;
     try {
@@ -1158,15 +1178,22 @@
     const pos = S.pos;
     $('posBox').classList.toggle('hidden', !pos);
     const canTrade = S.mode === 'blind';
-    $('buyCall').disabled = $('buyPut').disabled = !!pos || !canTrade;
+    $('buyCall').disabled = !canTrade || (!!pos && pos.type !== 'C');
+    $('buyPut').disabled = !canTrade || (!!pos && pos.type !== 'P');
+    const btn = (id, type) => {
+      const add = pos && pos.type === type;
+      const html = `${add ? 'Add' : 'Buy'} ${type} <kbd>${type.toLowerCase()}</kbd>`;
+      if ($(id).innerHTML !== html) $(id).innerHTML = html;
+    };
+    btn('buyCall', 'C'); btn('buyPut', 'P');
     $('closePos').disabled = !pos;
     if (pos) {
       const q = quoteNow(pos.osi), c2 = S.data.contracts[pos.osi];
       const pnl = q ? E.optionPnl(pos.entry_mid, q.bid, pos.qty) : null;
-      const exc = E.excursion(c2.t, c2.bid, pos.entry_t, S.clock, pos.entry_mid, pos.qty);
+      const exc = E.excursion(c2.t, c2.bid, pos.fills, S.clock);
       $('posTitle').textContent = `LONG ${pos.type} ${pos.strike} ×${pos.qty}`;
       $('posHold').textContent = `${E.fmtClock(pos.entry_t)} · ${Math.round((S.clock - pos.entry_t) / 1000)}s`;
-      $('posEntry').textContent = `${pos.entry_mid.toFixed(2)}${pos.exact ? '' : ' …'}`;
+      $('posEntry').textContent = `${pos.fills.length > 1 ? `avg of ${pos.fills.length} · ` : ''}${pos.entry_mid.toFixed(2)}${pos.exact ? '' : ' …'}`;
       $('posBid').textContent = q ? f2(q.bid) : '—';
       $('posPnl').textContent = money(pnl);
       $('posPnl').className = sgnCls(pnl);
@@ -1210,9 +1237,10 @@
   function seek(ms) {
     if (!S.data || ms == null) return;
     let t = Math.min(S.meta.close_ms, Math.max(S.meta.open_ms, ms));
-    if (S.pos && t < S.pos.entry_t) {                // can't rewind past an open entry
-      t = S.pos.entry_t;
-      toast('In a position — can’t rewind before its entry (close it first)', 'err');
+    const lastFill = S.pos ? S.pos.fills[S.pos.fills.length - 1].t : null;
+    if (S.pos && t < lastFill) {                     // can't rewind past an open position's last fill
+      t = lastFill;
+      toast('In a position — can’t rewind before its last fill (close it first)', 'err');
     }
     S.clock = t;
     for (const p of S.panes) p.R.full = true;      // rebuild prefix (also handles backwards seeks)

@@ -84,7 +84,7 @@ Press `?` in the UI for all keys.
 
 | Key | Action |
 |---|---|
-| `c` / `p` / `x` | buy call @ mid / buy put @ mid / close @ bid (BLIND only, long only, one position) |
+| `c` / `p` / `x` | buy call @ mid / buy put @ mid / close @ bid (BLIND only, long only, one position; the same key again adds to it, the other side is refused) |
 | `,` `.` / `;` `'` | strike offset − / + (+ = OTM) / quantity − / + |
 | `space` | play / pause |
 | `←` `→` | step one bar (Shift steps by the coarsest pane) |

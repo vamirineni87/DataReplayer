@@ -59,6 +59,22 @@ def test_journal_append_validate_delete():
         assert not trades.journal_delete('missing')
 
 
+def test_journal_scaled_in_trade_recomputes_from_fills():
+    with FakeArchive():
+        rec = {'session_date': str(SESSION), 'root': 'SPXW', 'dte': 0, 'expiry': str(EXPIRY),
+               'osi': osi('SPXW', 'P', 7700), 'strike': 7700, 'type': 'P', 'qty': 99, 'entry_t': 1,
+               'entry_mid': 99.0, 'exit_t': OPEN_MS + 9000, 'exit_bid': 12.0,
+               'fills': [{'t': OPEN_MS + 4000.7, 'mid': 13.0, 'qty': 2}, {'t': OPEN_MS, 'mid': 10.0, 'qty': 1}]}
+        saved = trades.journal_append(rec)
+        # client totals are ignored: qty / avg entry / first entry come from the fills
+        assert saved['qty'] == 3 and saved['entry_t'] == OPEN_MS and saved['entry_mid'] == 12.0
+        assert saved['pnl'] == 0.0                         # (12−10)·100 + (12−13)·200
+        assert [f['t'] for f in saved['fills']] == [OPEN_MS, OPEN_MS + 4000]
+        _raises(ValueError, trades.journal_append, {**rec, 'exit_t': OPEN_MS + 3000})   # exit before the add
+        single = trades.journal_append({**rec, 'fills': [{'t': OPEN_MS, 'mid': 10.0, 'qty': 1}]})
+        assert 'fills' not in single and single['qty'] == 1 and single['pnl'] == 200.0
+
+
 def test_journal_reset_is_scoped_to_one_session():
     with FakeArchive():
         base = {'root': 'SPXW', 'dte': 0, 'expiry': str(EXPIRY), 'osi': osi('SPXW', 'C', 7750), 'strike': 7750,

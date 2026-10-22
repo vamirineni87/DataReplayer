@@ -83,8 +83,12 @@ scratch file and `ORDER_HISTORY` at a missing file, so no private trades appear 
 ## Pricing contract (SPEC §3 — reproduce exactly, don't invent)
 - Entry = option `mid_price` as of the clock; exit = option `bid` as of the clock.
 - `pnl = (exit_bid − entry_mid) × 100 × qty` (default qty 1).
-- **Long-only, one position at a time:** `c`/`p` refused while in a position, `x` refused while
-  flat. Never sell to open. Mirrors `hotkey_trader.py` in the companion repo.
+- **Long-only, one position at a time, scale-in allowed** (operator's choice, deliberately beyond
+  the live `hotkey_trader.py`): the SAME side again while in a position ADDS `qty` of the HELD
+  contract at its mid (not the current offset's strike); the opposite side is refused until `x`;
+  `x` (refused while flat) closes everything at the bid. Entry = qty-weighted average of the
+  fills; P&L = Σ per fill = (exit_bid − avg) × 100 × total qty. Never sell to open, no partial
+  closes.
 - MANUAL strike pick = nearest strike to the current underlying, shifted by `offset`
   (+n = OTM). AUTO-by-delta (target |Δ| 0.55 from `trade_greeks`) is Phase 4.
 
@@ -174,9 +178,12 @@ Three layers, data flowing one way:
    warmed up on history when the source is ≥1m. Wheel over the price axis zooms price via the
    main series' `autoscaleInfoProvider` (`pane.vzoom`); overlays never stretch the scale.
    TradingView-style legend + crosshair sync (`mapTime`); splitters persist in `S.layout`.
-3. **Mark + score** — `Engine.canOpen/canClose` (long-only, one position, refused in REVIEW),
-   `optionPnl`, `excursion` (MFE/MAE), `tradeMarkers` (reveal with the clock in BLIND). Seeking
-   before an open entry is clamped; REVIEW is refused while in a position. The trades list lives
+3. **Mark + score** — `Engine.canOpen(pos, mode, type)/canClose` (long-only, one position, same
+   side = add, refused in REVIEW), `avgEntry`, `optionPnl`, `excursion(t, bid, fills, now)` (MFE/MAE;
+   each fill counts only from its own as-of row), `tradeMarkers` (one arrow per fill; reveal with
+   the clock in BLIND). Position = `{osi, type, strike, offset, fills:[{t, mid, qty, exact}]}`
+   (`syncPos` derives qty / entry_mid / entry_t); journal rows of scaled-in trades carry `fills`
+   and the server recomputes qty / entry / P&L from them. Seeking before the LAST fill is clamped; REVIEW is refused while in a position. The trades list lives
    INSIDE the single right-hand side panel, under the option quotes / position (operator wants one
    panel, not a separate journal column); tabs:
    Practice / Real (broker) / Uploaded; markers per source colour. `ConnectorPrimitive` draws

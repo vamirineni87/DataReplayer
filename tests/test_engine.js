@@ -205,6 +205,11 @@ tests.bollingerPopulationSigmaAndPartialWindow = () => {
 tests.tradingRulesLongOnlyOnePosition = () => {
   assert.strictEqual(E.canOpen(null, 'blind'), null);
   assert.match(E.canOpen({}, 'blind'), /Already/);
+  // same side again = add to the position; opposite side refused until closed
+  assert.strictEqual(E.canOpen({ type: 'P' }, 'blind', 'P'), null);
+  assert.match(E.canOpen({ type: 'P' }, 'blind', 'C'), /Holding a put/);
+  assert.match(E.canOpen({ type: 'C' }, 'blind', 'P'), /Holding a call/);
+  assert.match(E.canOpen({ type: 'P' }, 'review', 'P'), /BLIND/);
   assert.match(E.canOpen(null, 'review'), /BLIND/);             // never trade while the future is shown
   assert.match(E.canClose(null), /No open/);
   assert.strictEqual(E.canClose({}), null);
@@ -213,9 +218,36 @@ tests.tradingRulesLongOnlyOnePosition = () => {
 
 tests.excursionUsesOnlyRowsInsideTheHold = () => {
   const t = [1000, 2000, 3000, 4000, 5000], bid = [9, 10, 12, 8, 30];
-  const x = E.excursion(t, bid, 2500, 4000, 10, 1);             // as-of entry row (2000) .. 4000
+  const x = E.excursion(t, bid, [{ t: 2500, mid: 10, qty: 1 }], 4000);   // as-of entry row (2000) .. 4000
   assert.ok(near(x.mfe, 200) && near(x.mae, -200));
   assert.ok(!near(x.mfe, 2000), 'the 30 bid after nowT must not count');
+};
+
+tests.scaleInAveragesEntryAndNeverBackdatesSize = () => {
+  const a = E.avgEntry([{ t: 1000, mid: 10, qty: 1 }, { t: 3000, mid: 13, qty: 2 }]);
+  assert.strictEqual(a.qty, 3);
+  assert.ok(near(a.mid, 12) && a.t === 1000);
+  // P&L of the averaged position == the sum of the fills' P&L
+  assert.ok(near(E.optionPnl(a.mid, 15, a.qty), E.optionPnl(10, 15, 1) + E.optionPnl(13, 15, 2)));
+  const t = [1000, 2000, 3000, 4000], bid = [10, 16, 13, 11];
+  const x = E.excursion(t, bid, [{ t: 1000, mid: 10, qty: 1 }, { t: 3000, mid: 13, qty: 2 }], 4000);
+  // best = +600 at 2000 with ONE contract (the add came later), not 3 × (16−12) × 100;
+  // worst = −300 at 4000 once all three are held: (11−10)·100 + (11−13)·200
+  assert.ok(near(x.mfe, 600) && near(x.mae, -300), JSON.stringify(x));
+  // after the add at 3000: 11 bid -> (11−10)·100 + (11−13)·200 = −300
+  const y = E.excursion([1000, 3000, 4000], [10, 13, 11], [{ t: 1000, mid: 10, qty: 1 }, { t: 3000, mid: 13, qty: 2 }], 4000);
+  assert.ok(near(y.mae, -300) && near(y.mfe, 300), JSON.stringify(y));
+};
+
+tests.scaledInTradeShowsOneMarkerPerFillWithTheClock = () => {
+  const tr = [{ entry_t: 100, exit_t: 900, pnl: 50, label: 'P', exit_price: 2,
+    fills: [{ t: 100, mid: 1, qty: 1 }, { t: 400, mid: 1.5, qty: 2 }] }];
+  const style = { entry: 'b', exit: 'g', win: 'w', loss: 'l' };
+  const id = (ms) => ms;
+  assert.strictEqual(E.tradeMarkers(tr, 200, false, id, style).length, 1);    // the add is still future
+  const m = E.tradeMarkers(tr, 1000, false, id, style);
+  assert.deepStrictEqual(m.map((x) => x.time), [100, 400, 900]);
+  assert.match(m[1].text, /^\+2 @1\.50$/);
 };
 
 tests.tradeMarkersRevealWithClockInBlind = () => {

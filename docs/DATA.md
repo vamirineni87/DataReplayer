@@ -203,6 +203,9 @@ The fields:
 - `entry_t` and `exit_t` are session ms.
 - `pnl = (exit_bid − entry_mid) × 100 × qty`.
 - `mfe` and `mae` are the best and worst unrealized P&L at the bid while the trade was held.
+- `fills` is present only for a **scaled-in** trade, as `[{"t", "mid", "qty"}, …]` in time order.
+  The server derives `qty` (the sum), `entry_mid` (the quantity-weighted average), `entry_t` (the
+  first fill) and `pnl` from it, ignoring whatever totals the client sent.
 
 ## Slice JSON and HTTP API
 

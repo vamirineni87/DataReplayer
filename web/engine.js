@@ -337,25 +337,42 @@
   // Long-only, one position at a time; entry @ mid, exit @ bid; P&L = (exit − entry) × 100 × qty.
 
   /** Reason the open is refused, or null if allowed. */
-  function canOpen(pos, mode) {
+  // One position at a time, long only. Pressing the SAME side again while in a position adds to
+  // it (scale in, same contract); the opposite side is refused until it is closed.
+  const sideName = (type) => (type === 'C' ? 'call' : 'put');
+  function canOpen(pos, mode, type) {
     if (mode !== 'blind') return 'Switch to BLIND to trade (REVIEW shows the future)';
-    if (pos) return 'Already in a position — x to close';
+    if (pos && (!type || pos.type !== type)) {
+      return type ? `Holding a ${sideName(pos.type)} — x to close it before buying a ${sideName(type)}`
+        : 'Already in a position — x to close';
+    }
     return null;
   }
   function canClose(pos) { return pos ? null : 'No open position'; }
   function optionPnl(entryMid, bid, qty) { return (bid - entryMid) * 100 * qty; }
 
-  /** MFE / MAE ($) of a long option held from entryT to nowT, marked to the bid as of each row. */
-  function excursion(t, bid, entryT, nowT, entryMid, qty) {
-    let i = asOfIndex(t, entryT);
-    if (i < 0) i = 0;
+  /** Position size and quantity-weighted entry mid of a list of fills [{t, mid, qty}]. */
+  function avgEntry(fills) {
+    let qty = 0, cost = 0;
+    for (const f of fills) { qty += f.qty; cost += f.mid * f.qty; }
+    return { qty, mid: qty ? cost / qty : 0, t: fills.length ? fills[0].t : null };
+  }
+
+  /** MFE / MAE ($) of a long option position up to nowT, marked to the bid as of each row.
+   *  `fills` = [{t, mid, qty}] (scale-ins): each fill counts from its own as-of row onward, so
+   *  an add never back-dates its size into earlier excursions. */
+  function excursion(t, bid, fills, nowT) {
+    if (!fills.length) return { mfe: 0, mae: 0 };
+    const start = fills.map((f) => Math.max(0, asOfIndex(t, f.t)));
     let hi = -Infinity, lo = Infinity;
-    for (let j = i; j < t.length && t[j] <= nowT; j++) {
-      if (bid[j] > hi) hi = bid[j];
-      if (bid[j] < lo) lo = bid[j];
+    for (let j = start[0]; j < t.length && t[j] <= nowT; j++) {
+      let pnl = 0;
+      for (let k = 0; k < fills.length; k++) if (start[k] <= j) pnl += optionPnl(fills[k].mid, bid[j], fills[k].qty);
+      if (pnl > hi) hi = pnl;
+      if (pnl < lo) lo = pnl;
     }
     if (hi === -Infinity) return { mfe: 0, mae: 0 };
-    return { mfe: optionPnl(entryMid, hi, qty), mae: optionPnl(entryMid, lo, qty) };
+    return { mfe: hi, mae: lo };
   }
 
   /** Chart markers for trades. In blind mode (reveal=false) an entry/exit appears only once the
@@ -364,7 +381,14 @@
     const out = [];
     for (const tr of trades) {
       const label = tr.label || '';
-      if (tr.entry_t != null && (reveal || tr.entry_t <= clock)) {
+      if (Array.isArray(tr.fills) && tr.fills.length > 1) {          // scaled in: one arrow per fill
+        tr.fills.forEach((f, i) => {
+          if (reveal || f.t <= clock) {
+            out.push({ time: timeOf(f.t), position: 'belowBar', shape: 'arrowUp', color: style.entry,
+              text: `${i ? '+' + f.qty : label}${' @' + Number(f.mid).toFixed(2)}` });
+          }
+        });
+      } else if (tr.entry_t != null && (reveal || tr.entry_t <= clock)) {
         out.push({ time: timeOf(tr.entry_t), position: 'belowBar', shape: 'arrowUp', color: style.entry,
           text: `${label}${tr.entry_price != null ? ' @' + Number(tr.entry_price).toFixed(2) : ''}` });
       }
@@ -435,6 +459,6 @@
   return {
     SPEEDS, INTERVALS, MAX_FRAME_MS,
     asOfIndex, valueAsOf, advanceClock, buildBuckets, bucketOf, barAsOf, fullBars,
-    bucketCloseValues, liveSub, priceAsOf, tapeCum, tapeStats, mtfBB, mtfEMA, canOpen, canClose, optionPnl, excursion, tradeMarkers, tradeConnectors, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
+    bucketCloseValues, liveSub, priceAsOf, tapeCum, tapeStats, mtfBB, mtfEMA, canOpen, canClose, avgEntry, optionPnl, excursion, tradeMarkers, tradeConnectors, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
   };
 });

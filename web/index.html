@@ -64,8 +64,8 @@
         <span class="stepper"><button id="qtyDn" title="(;)">−</button><b id="qty">1</b><button id="qtyUp" title="(')">+</button></span>
         <span></span></div>
       <div class="trade-btns">
-        <button id="buyCall" class="buy-call" title="Buy call at mid (c)">Buy C <kbd>c</kbd></button>
-        <button id="buyPut" class="buy-put" title="Buy put at mid (p)">Buy P <kbd>p</kbd></button>
+        <button id="buyCall" class="buy-call" title="Buy call at mid (c); while long a call, adds to it">Buy C <kbd>c</kbd></button>
+        <button id="buyPut" class="buy-put" title="Buy put at mid (p); while long a put, adds to it">Buy P <kbd>p</kbd></button>
         <button id="closePos" title="Close at bid (x)">Close <kbd>x</kbd></button>
       </div>
     </div>
@@ -131,7 +131,7 @@
   <div class="help">
     <h2>Keys</h2>
     <table>
-      <tr><td>c / p / x</td><td>buy call @ mid / buy put @ mid / close @ bid (BLIND only; one position, long only)</td></tr>
+      <tr><td>c / p / x</td><td>buy call @ mid / buy put @ mid / close @ bid (BLIND only; long only, one position — the same key again adds to it, the other side is refused)</td></tr>
       <tr><td>, / .</td><td>strike offset − / + (+ = OTM)</td></tr>
       <tr><td>; / '</td><td>quantity − / +</td></tr>
       <tr><td>space</td><td>play / pause</td></tr>
