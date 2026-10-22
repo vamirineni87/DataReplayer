@@ -48,3 +48,8 @@ def vp_row_size(sym: str) -> float:
 
 # Prior-day context on 1m+ chart panes.
 HISTORY_MAX_DAYS = 10
+
+# Practice journal (private; git-ignored) and the operator's broker fills (read-only, never written).
+JOURNAL_PATH = Path(os.getenv('REPLAYER_JOURNAL', str(PROJECT_DIR / 'journal' / 'trades.jsonl')))
+ORDER_HISTORY = Path(os.getenv('ORDER_HISTORY',
+                               r'E:\Programming\TradingBot\Schwab-TradingBotLite\order_history.json'))

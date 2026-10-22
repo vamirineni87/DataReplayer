@@ -30,6 +30,13 @@ profile — SPY is the chart proxy for SPXW), **Classic** (underlying + option C
 options**, or **Custom** (pick Source + Interval per pane). Optional EMA20 / Bollinger(20,2), and
 **History** (0/3/5/10 prior days on 1m+ SPY panes, each with its own VWAP and volume profile).
 
+Trading: `c` / `p` buy the offset-selected call / put at the mid, `x` closes at the bid (BLIND
+only, long only, one position); `,` `.` offset, `;` `'` qty. Closed trades go to
+`journal/trades.jsonl` (private, git-ignored). The Journal panel (`j`) lists Practice, Real
+(from the companion repo's `order_history.json`, read-only) and Uploaded trades (drop a JSON in
+`order_history.json` shape or a practice export). Per-pane indicator chips; EMA/BB take a length
+and source timeframe. Wheel on the price axis zooms price; drag dividers to resize.
+
 ## Stack
 Python (`pandas` + `pyarrow`) slicer + stdlib HTTP server; static HTML + TradingView
 **lightweight-charts** (MIT). Windows 11. No build step, no cloud, no database.

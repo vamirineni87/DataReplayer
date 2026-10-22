@@ -22,28 +22,29 @@
   </span>
   <button id="load" class="primary">Load</button>
   <label>View <select id="view"></select></label>
-  <label class="chk"><input id="bands" type="checkbox" checked> VWAP σ</label>
-  <label class="chk"><input id="vp" type="checkbox" checked> Vol profile</label>
-  <label class="chk"><input id="ema" type="checkbox"> EMA20</label>
-  <label class="chk"><input id="bb" type="checkbox"> BB</label>
   <label title="Prior sessions on 1m+ SPY panes (each with its own VWAP and volume profile)">History
     <select id="histDays"><option value="0">0</option><option value="3">3d</option><option value="5" selected>5d</option><option value="10">10d</option></select></label>
   <button id="mode" class="mode blind" title="Toggle blind / review (v)">BLIND</button>
   <span id="note" class="note"></span>
-  <button id="helpBtn" class="right" title="Keyboard help (?)">?</button>
+  <span class="right">
+    <button id="journalBtn" title="Show / hide the journal panel (j)">Journal</button>
+    <button id="helpBtn" title="Keyboard help (?)">?</button>
+  </span>
 </header>
 
-<main>
-  <section class="charts">
+<main id="main">
+  <section class="charts" id="charts">
     <div id="pane0" class="pane">
-      <div class="phead"><select id="src0"><option value="chart">SPY trades</option><option value="underlying">Underlying</option><option value="options">Options C/P</option><option value="none">Hidden</option></select><select id="iv0"></select></div>
-      <div id="chart0" class="chart"></div>
+      <div class="phead"><select id="src0"><option value="chart">SPY trades</option><option value="underlying">Underlying</option><option value="options">Options C/P</option><option value="none">Hidden</option></select><select id="iv0"></select><span class="ind" id="ind0"></span></div>
+      <div class="chartwrap"><div id="chart0" class="chart"></div><div class="legend" id="legend0"></div></div>
     </div>
+    <div id="hsplit" class="hsplit" title="Drag to resize"></div>
     <div id="pane1" class="pane">
-      <div class="phead"><select id="src1"><option value="chart">SPY trades</option><option value="underlying">Underlying</option><option value="options">Options C/P</option><option value="none">Hidden</option></select><select id="iv1"></select></div>
-      <div id="chart1" class="chart"></div>
+      <div class="phead"><select id="src1"><option value="chart">SPY trades</option><option value="underlying">Underlying</option><option value="options">Options C/P</option><option value="none">Hidden</option></select><select id="iv1"></select><span class="ind" id="ind1"></span></div>
+      <div class="chartwrap"><div id="chart1" class="chart"></div><div class="legend" id="legend1"></div></div>
     </div>
   </section>
+  <div class="vsplit" id="vsplitHud" title="Drag to resize"></div>
   <aside class="hud">
     <div id="clock" class="clock">--:--:--</div>
     <div class="row"><span id="playState">PAUSED</span><span id="speed">1×</span></div>
@@ -51,7 +52,21 @@
     <div class="row"><span>VWAP</span><span id="vwapPx">—</span></div>
     <div class="row muted"><span>VAL / POC / VAH</span><span id="vaInfo">—</span></div>
     <div class="row" id="rootRow"><span id="rootSym">SPX</span><b id="rootPx">—</b></div>
-    <div class="row muted"><span>Offset</span><span id="offset">0 (ATM)</span></div>
+
+    <div class="ticket">
+      <div class="row"><span>Offset</span>
+        <span class="stepper"><button id="offDn" title="ITM (,)">−</button><b id="offset">0</b><button id="offUp" title="OTM (.)">+</button></span>
+        <span class="muted" id="offsetLbl">ATM</span></div>
+      <div class="row"><span>Qty</span>
+        <span class="stepper"><button id="qtyDn" title="(;)">−</button><b id="qty">1</b><button id="qtyUp" title="(')">+</button></span>
+        <span></span></div>
+      <div class="trade-btns">
+        <button id="buyCall" class="buy-call" title="Buy call at mid (c)">Buy C <kbd>c</kbd></button>
+        <button id="buyPut" class="buy-put" title="Buy put at mid (p)">Buy P <kbd>p</kbd></button>
+        <button id="closePos" title="Close at bid (x)">Close <kbd>x</kbd></button>
+      </div>
+    </div>
+
     <div class="opt call">
       <div class="row"><b>CALL</b><span id="cStrike">—</span></div>
       <div class="quote"><span>bid <b id="cBid">—</b></span><span>mid <b id="cMid">—</b></span><span>ask <b id="cAsk">—</b></span></div>
@@ -62,7 +77,34 @@
       <div class="quote"><span>bid <b id="pBid">—</b></span><span>mid <b id="pMid">—</b></span><span>ask <b id="pAsk">—</b></span></div>
       <div class="age" id="pAge"></div>
     </div>
+
+    <div class="position hidden" id="posBox">
+      <div class="row"><b id="posTitle">LONG</b><span id="posHold" class="muted"></span></div>
+      <div class="row"><span>entry mid</span><span id="posEntry">—</span></div>
+      <div class="row"><span>bid now</span><span id="posBid">—</span></div>
+      <div class="row"><span>unrealized</span><b id="posPnl">—</b></div>
+      <div class="row muted"><span>MFE / MAE</span><span id="posExc">—</span></div>
+    </div>
     <div class="meta" id="meta"></div>
+  </aside>
+  <div class="vsplit" id="vsplitJr" title="Drag to resize"></div>
+  <aside class="journal" id="journal">
+    <div class="jtabs">
+      <button data-tab="practice" class="active">Practice</button>
+      <button data-tab="broker">Real</button>
+      <button data-tab="upload">Uploaded</button>
+    </div>
+    <div class="jtools">
+      <label class="chk" title="Show this list's trades on the charts"><input id="jShow" type="checkbox" checked> on chart</label>
+      <span class="right">
+        <button id="jUpload" title="Load trades from a JSON file (order_history.json format or a practice export)">Upload</button>
+        <button id="jExport" title="Download this session's practice trades as JSON">Export</button>
+      </span>
+      <input id="jFile" type="file" accept=".json,application/json" class="hidden">
+    </div>
+    <div class="jsum" id="jSum"></div>
+    <div class="jlist" id="jList"></div>
+    <div class="jfoot muted" id="jFoot"></div>
   </aside>
 </main>
 
@@ -78,23 +120,28 @@
   <input id="goto" type="text" placeholder="10:32" title="Jump to ET time (g)" size="8">
 </footer>
 
+<div id="toasts" class="toasts"></div>
+<div id="drop" class="overlay drop hidden"><div>Drop a trades JSON to overlay it</div></div>
 <div id="overlay" class="overlay hidden"><div id="overlayMsg"></div></div>
 
 <div id="help" class="overlay hidden">
   <div class="help">
     <h2>Keys</h2>
     <table>
+      <tr><td>c / p / x</td><td>buy call @ mid / buy put @ mid / close @ bid (BLIND only; one position, long only)</td></tr>
+      <tr><td>, / .</td><td>strike offset − / + (+ = OTM)</td></tr>
+      <tr><td>; / '</td><td>quantity − / +</td></tr>
       <tr><td>space</td><td>play / pause</td></tr>
       <tr><td>&rarr; / &larr;</td><td>step one bar (finest pane) · Shift = coarsest pane</td></tr>
       <tr><td>[ / ]</td><td>speed down / up (0.25× … 60×, Max)</td></tr>
       <tr><td>Home / End</td><td>jump to open / close</td></tr>
-      <tr><td>, / .</td><td>strike offset − / + (+ = OTM)</td></tr>
       <tr><td>v</td><td>toggle BLIND (future hidden) / REVIEW (whole day)</td></tr>
       <tr><td>g</td><td>jump to a time (type 10:32, Enter)</td></tr>
+      <tr><td>j</td><td>show / hide the journal panel</td></tr>
       <tr><td>?</td><td>this help · Esc closes</td></tr>
-      <tr><td>View</td><td>preset layouts; or pick Source + Interval per pane (→ Custom)</td></tr>
+      <tr><td>mouse</td><td>wheel on the price axis zooms price · double-click the axis resets · drag dividers to resize</td></tr>
+      <tr><td>chips</td><td>per-pane indicators; EMA / BB show length + timeframe (e.g. BB 20 on 1m on any chart)</td></tr>
     </table>
-    <p class="muted">Trading keys (c / p / x, qty ; ') arrive in Phase 3.</p>
   </div>
 </div>
 

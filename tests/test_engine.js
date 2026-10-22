@@ -202,6 +202,50 @@ tests.bollingerPopulationSigmaAndPartialWindow = () => {
   assert.ok(near(E.bbOf(win, 2).mid, bb[4].mid));
 };
 
+tests.tradingRulesLongOnlyOnePosition = () => {
+  assert.strictEqual(E.canOpen(null, 'blind'), null);
+  assert.match(E.canOpen({}, 'blind'), /Already/);
+  assert.match(E.canOpen(null, 'review'), /BLIND/);             // never trade while the future is shown
+  assert.match(E.canClose(null), /No open/);
+  assert.strictEqual(E.canClose({}), null);
+  assert.ok(near(E.optionPnl(14.95, 16.20, 2), 250));          // (exit bid − entry mid) × 100 × qty
+};
+
+tests.excursionUsesOnlyRowsInsideTheHold = () => {
+  const t = [1000, 2000, 3000, 4000, 5000], bid = [9, 10, 12, 8, 30];
+  const x = E.excursion(t, bid, 2500, 4000, 10, 1);             // as-of entry row (2000) .. 4000
+  assert.ok(near(x.mfe, 200) && near(x.mae, -200));
+  assert.ok(!near(x.mfe, 2000), 'the 30 bid after nowT must not count');
+};
+
+tests.tradeMarkersRevealWithClockInBlind = () => {
+  const trades = [{ entry_t: 100, exit_t: 500, entry_price: 1, exit_price: 2, pnl: 100, label: 'C' }];
+  const timeOf = (ms) => ms;
+  const style = { entry: 'b', exit: 'g', win: 'w', loss: 'l' };
+  assert.strictEqual(E.tradeMarkers(trades, 50, false, timeOf, style).length, 0);
+  assert.strictEqual(E.tradeMarkers(trades, 300, false, timeOf, style).length, 1);   // exit still hidden
+  assert.strictEqual(E.tradeMarkers(trades, 300, true, timeOf, style).length, 2);    // review shows all
+  assert.strictEqual(E.tradeMarkers(trades, 600, false, timeOf, style)[1].color, 'w');
+};
+
+tests.multiTimeframeMatchesSourceSeriesAtBarEnds = () => {
+  const { c } = makeChart(1800, 5);                             // 30 min of 1s bars
+  const b1m = E.buildBuckets(c.t, OPEN, OPEN + 1800000, 60000);
+  const closes = E.fullOhlcv(c, b1m).map((x) => (x ? x.close : null));
+  const bb = E.bbSeries(closes, 20, 2), ema = E.emaSeries(closes, 20);
+  for (let m = 0; m < closes.length; m++) {
+    if (closes[m] == null) continue;
+    const a = E.mtfBB(closes, m, closes[m], 20, 2);
+    assert.deepStrictEqual(a, bb[m], `BB at 1m bar ${m}`);
+    const e = E.mtfEMA(closes, ema, m, closes[m], 20);
+    assert.ok((e == null && ema[m] == null) || near(e, ema[m]), `EMA at 1m bar ${m}`);
+  }
+  // mid-bar on a 1s pane: only closed 1m bars + the price as of that second
+  const m = 25, x = 123.45;
+  const win = E.lastValues(closes, m - 1, 19).concat([x]);
+  assert.deepStrictEqual(E.mtfBB(closes, m, x, 20, 2), E.bbOf(win, 2));
+};
+
 let failed = 0;
 for (const [name, fn] of Object.entries(tests)) {
   try { fn(); console.log(`PASS engine.${name}`); }

@@ -8,6 +8,10 @@ Routes:
     GET /api/sessions?root=&dte=        available session dates
     GET /api/slice?date=&root=&dte=&cadence=   session slice JSON (gzip if accepted)
     GET /api/history?date=&root=&days=  prior sessions at 1m (VWAP/σ, VP) for chart context
+    GET /api/quote?date=&root=&dte=&osi=&t=     exact bid/ask/mid as of t (full tick tape)
+    GET/POST/DELETE /api/journal                practice round trips (journal/trades.jsonl)
+    GET /api/broker?date=                       real round trips from order_history.json (read-only)
+    POST /api/parse-trades?date=&name=          uploaded JSON -> round trips (not stored)
 """
 import argparse
 import gzip
@@ -20,7 +24,7 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import config, history, sessions, slicer
+from . import config, history, sessions, slicer, trades
 from .slicer import NoData
 
 WEB_DIR = (config.PROJECT_DIR / 'web').resolve()
@@ -68,23 +72,59 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code: int, obj):
         self._send(code, json.dumps(obj).encode('utf-8'), 'application/json')
 
-    def do_GET(self):
+    MAX_BODY = 32 * 1024 * 1024
+
+    def _body_json(self):
+        n = int(self.headers.get('Content-Length') or 0)
+        if n <= 0 or n > self.MAX_BODY:
+            raise ValueError('missing or oversized body')
+        return json.loads(self.rfile.read(n).decode('utf-8'))
+
+    def _dispatch(self, method):
         u = urlparse(self.path)
         q = {k: v[-1] for k, v in parse_qs(u.query).items()}
         try:
-            if u.path == '/api/sessions':
-                return self._sessions(q)
-            if u.path == '/api/slice':
-                return self._slice(q)
-            if u.path == '/api/history':
-                return self._history(q)
-            return self._static(u.path)
+            route = self.ROUTES.get((method, u.path))
+            if route:
+                return route(self, q)
+            if method == 'GET':
+                return self._static(u.path)
+            return self._json(404, {'error': 'not found'})
         except NoData as e:
             return self._json(404, {'error': str(e)})
-        except (ValueError, KeyError) as e:
+        except (ValueError, KeyError, json.JSONDecodeError) as e:
             return self._json(400, {'error': f'bad request: {e}'})
         except Exception as e:                        # keep the server alive; surface the error
             return self._json(500, {'error': f'{type(e).__name__}: {e}'})
+
+    def do_GET(self):
+        self._dispatch('GET')
+
+    def do_POST(self):
+        self._dispatch('POST')
+
+    def do_DELETE(self):
+        self._dispatch('DELETE')
+
+    def _quote(self, q):
+        self._json(200, trades.quote_at(date.fromisoformat(q['date']), q['root'].upper(), int(q['dte']),
+                                        q['osi'], int(q['t'])))
+
+    def _journal_get(self, q):
+        self._json(200, {'trades': trades.journal_read(q.get('date'), q.get('root'))})
+
+    def _journal_post(self, q):
+        self._json(200, trades.journal_append(self._body_json()))
+
+    def _journal_delete(self, q):
+        self._json(200, {'deleted': trades.journal_delete(q['id'])})
+
+    def _broker(self, q):
+        self._json(200, {'trades': trades.broker_trades(date.fromisoformat(q['date']))})
+
+    def _parse_trades(self, q):
+        self._json(200, {'trades': trades.parse_upload(self._body_json(), date.fromisoformat(q['date']),
+                                                       q.get('name', 'upload'))})
 
     def _sessions(self, q):
         root, dte = q.get('root', 'SPXW').upper(), int(q.get('dte', '0'))
@@ -117,6 +157,8 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(200, gzip.decompress(body), 'application/json')
 
+    ROUTES = {}
+
     def _static(self, path: str):
         rel = 'index.html' if path in ('', '/') else path.lstrip('/')
         target = (WEB_DIR / rel).resolve()
@@ -126,6 +168,19 @@ class Handler(BaseHTTPRequestHandler):
         if ctype.startswith('text/') or ctype.endswith('javascript'):
             ctype += '; charset=utf-8'
         self._send(200, target.read_bytes(), ctype)
+
+
+Handler.ROUTES = {
+    ('GET', '/api/sessions'): Handler._sessions,
+    ('GET', '/api/slice'): Handler._slice,
+    ('GET', '/api/history'): Handler._history,
+    ('GET', '/api/quote'): Handler._quote,
+    ('GET', '/api/journal'): Handler._journal_get,
+    ('POST', '/api/journal'): Handler._journal_post,
+    ('DELETE', '/api/journal'): Handler._journal_delete,
+    ('GET', '/api/broker'): Handler._broker,
+    ('POST', '/api/parse-trades'): Handler._parse_trades,
+}
 
 
 def make_server(host: str = '127.0.0.1', port: int = 8765) -> ThreadingHTTPServer:

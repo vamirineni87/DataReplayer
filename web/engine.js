@@ -259,6 +259,73 @@
     return out;
   }
 
+  // ---------------------------------------------------------------- multi-timeframe EMA / BB
+  // Indicator computed on SOURCE bars (e.g. 1m) and shown on any pane (e.g. 1s). At a display
+  // instant inside source bar `idx`, the value uses the completed source closes before `idx`
+  // plus `x` = the price as of that instant — TradingView's developing higher-timeframe value,
+  // and never anything after the instant. At a source bar's end it equals the plain series.
+
+  /** BB at source index idx with in-progress close x (null until `len` closes exist). */
+  function mtfBB(closes, idx, x, len, mult) {
+    if (x == null || idx == null) return null;
+    const win = lastValues(closes, idx - 1, len - 1).concat([x]);
+    return win.length === len ? bbOf(win, mult) : null;
+  }
+  /** EMA at source index idx with in-progress close x; emaState = emaSeries(closes, len).
+   *  On the seeding bar (len-th close) it is the SMA, exactly like emaSeries. */
+  function mtfEMA(closes, emaState, idx, x, len) {
+    if (x == null || idx == null) return null;
+    const prev = idx > 0 ? emaState[idx - 1] : null;
+    if (prev != null) return emaStep(prev, x, len);
+    const win = lastValues(closes, idx - 1, len - 1);
+    return win.length === len - 1 ? (win.reduce((a, v) => a + v, 0) + x) / len : null;
+  }
+
+  // ---------------------------------------------------------------- trading (SPEC §3)
+  // Long-only, one position at a time; entry @ mid, exit @ bid; P&L = (exit − entry) × 100 × qty.
+
+  /** Reason the open is refused, or null if allowed. */
+  function canOpen(pos, mode) {
+    if (mode !== 'blind') return 'Switch to BLIND to trade (REVIEW shows the future)';
+    if (pos) return 'Already in a position — x to close';
+    return null;
+  }
+  function canClose(pos) { return pos ? null : 'No open position'; }
+  function optionPnl(entryMid, bid, qty) { return (bid - entryMid) * 100 * qty; }
+
+  /** MFE / MAE ($) of a long option held from entryT to nowT, marked to the bid as of each row. */
+  function excursion(t, bid, entryT, nowT, entryMid, qty) {
+    let i = asOfIndex(t, entryT);
+    if (i < 0) i = 0;
+    let hi = -Infinity, lo = Infinity;
+    for (let j = i; j < t.length && t[j] <= nowT; j++) {
+      if (bid[j] > hi) hi = bid[j];
+      if (bid[j] < lo) lo = bid[j];
+    }
+    if (hi === -Infinity) return { mfe: 0, mae: 0 };
+    return { mfe: optionPnl(entryMid, hi, qty), mae: optionPnl(entryMid, lo, qty) };
+  }
+
+  /** Chart markers for trades. In blind mode (reveal=false) an entry/exit appears only once the
+   *  clock reaches it. timeOf(ms) maps a session instant to the pane's bar time. Sorted by time. */
+  function tradeMarkers(trades, clock, reveal, timeOf, style) {
+    const out = [];
+    for (const tr of trades) {
+      const label = tr.label || '';
+      if (tr.entry_t != null && (reveal || tr.entry_t <= clock)) {
+        out.push({ time: timeOf(tr.entry_t), position: 'belowBar', shape: 'arrowUp', color: style.entry,
+          text: `${label}${tr.entry_price != null ? ' @' + Number(tr.entry_price).toFixed(2) : ''}` });
+      }
+      if (tr.exit_t != null && (reveal || tr.exit_t <= clock)) {
+        const pnl = tr.pnl != null ? ` ${tr.pnl >= 0 ? '+' : '−'}$${Math.abs(tr.pnl).toFixed(0)}` : '';
+        out.push({ time: timeOf(tr.exit_t), position: 'aboveBar', shape: 'arrowDown',
+          color: tr.pnl == null ? style.exit : tr.pnl >= 0 ? style.win : style.loss,
+          text: `${tr.exit_price != null ? '@' + Number(tr.exit_price).toFixed(2) : ''}${pnl}` });
+      }
+    }
+    return out.sort((a, b) => a.time - b.time);
+  }
+
   /** Live tool's OptionWindow.pick: nearest strike (ties -> lower), + offset = OTM, clamped. */
   function pickStrike(strikes, price, type, offset) {
     const s = strikes.slice().sort((a, b) => a - b);
@@ -300,6 +367,6 @@
   return {
     SPEEDS, INTERVALS, MAX_FRAME_MS,
     asOfIndex, valueAsOf, advanceClock, buildBuckets, bucketOf, barAsOf, fullBars,
-    bucketCloseValues, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
+    bucketCloseValues, mtfBB, mtfEMA, canOpen, canClose, optionPnl, excursion, tradeMarkers, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
   };
 });

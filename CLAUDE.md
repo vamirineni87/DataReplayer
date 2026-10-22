@@ -15,7 +15,9 @@ Git remote: `https://github.com/vamirineni87/DataReplayer` (private). Build in t
 phases (each independently runnable):
 1. **Slicer CLI** — done (`replayer/slicer.py`).
 2. **Smooth chart + clock** — done (`replayer/server.py`, `web/`).
-3. **MVP** — `c`/`p`/`x` marking, P&L, journal, trade overlays + CSV/JSON import.
+3. **MVP** — mostly done: `c`/`p`/`x` marking, exact re-pricing, P&L + MFE/MAE, journal panel,
+   real trades from `order_history.json`, JSON upload overlays. Not yet: CSV column mapping,
+   notes/tags editing, connectors between entry/exit markers.
 4. Optional fidelity/power features (AUTO-delta, tick rounding, brackets, Schwab-recordings).
 
 Confirm the SPEC §10 open decisions with the operator before/while building (first instrument,
@@ -27,7 +29,9 @@ TradingView-like layout (SPY 1m on top, SPY 1s below, each with session VWAP ±1
 volume, developing POC/VAH/VAL + volume profile; optional EMA20 + Bollinger; 5–10 prior days of
 context on the 1m chart) — but **every view stays selectable** (presets + per-pane
 source/interval; never remove a view). Date picking shows only days with data. Still
-open: data horizon (Schwab L1), journal destination, upload formats (ask for a sample file).
+open: data horizon (Schwab L1). Journal = standalone `journal/trades.jsonl` for now. Uploads = JSON in
+`order_history.json` shape (operator's choice) or a practice export; real trades are read
+(read-only) from the companion repo's `order_history.json` (path: `config.ORDER_HISTORY`).
 
 ## Commands
 - All tests: `python tests/run_all.py`
@@ -35,6 +39,9 @@ open: data horizon (Schwab L1), journal destination, upload formats (ask for a s
   `python tests/run_all.py slicer as_of`. Tests build a tiny fake archive in a temp dir
   (`tests/fixtures.py`) and repoint `replayer.config`; tests needing the real `T:` archive raise
   `unittest.SkipTest` when it's absent. New test modules must be added to `MODULES` in `run_all.py`.
+  `FakeArchive` also redirects `config.JOURNAL_PATH` / `config.ORDER_HISTORY` to the temp dir —
+  tests must never touch the real journal or order history. For manual UI tests that trade, run
+  a second server with `REPLAYER_JOURNAL=<scratch path>` so practice marks don't pollute the journal.
 - Slice a session: `python -m replayer.slicer 2026-08-28 SPXW 0 [--cadence 1s|trade] [--window 15] [--out f.json] [--no-cache]`
   (summary on stderr; exit 2 = clean "no data"). Restart the server after slicer changes (it
   imports the code once) and bump `SLICER_VERSION`.
@@ -104,6 +111,13 @@ Three layers, data flowing one way:
      each day's own VWAP/σ, developing POC/VAH/VAL and final profile, built from the same
      `chart_bars` (same condition filter) and the same profile rule as `engine.profileSeries`;
      one cache file per (symbol, day). Prior days are wholly in the past → always shown.
+   - `replayer/trades.py`: `quote_at` (exact as-of quote from the FULL tick tape, LRU per
+     contract — marks are priced in the browser from 1s data, then re-priced here at the exact
+     ms), journal append/read/delete (`journal/trades.jsonl`; P&L recomputed server-side),
+     `round_trips` (fills → flat-to-flat FIFO round trips over ALL history, so overnight
+     carries pair correctly; the broker's OPENING expiration bookkeeping leg is ignored), and
+     `parse_upload`. Routes: `/api/quote`, `/api/journal` (GET/POST/DELETE), `/api/broker`,
+     `/api/parse-trades`.
    - `slicer.prune_cache()` (run at server start) deletes cache files from older
      `SLICER_VERSION`/`HISTORY_VERSION`; bump the matching version whenever output changes.
    - `replayer/server.py`: `/api/sessions?root=&dte=` (dates from `replayer/sessions.py`, which
@@ -125,14 +139,22 @@ Three layers, data flowing one way:
    operator's TradingView: **blue VWAP, orange 2σ**, gray other bands. Chart panes at ≥1m prepend
    history rows (one whitespace separator per day breaks the lines); EMA20/BB(20,2) run over
    history+today closes, in-progress bar stepped from the last closed state. View: the library's
-   `shiftVisibleRangeOnNewBar` is off; `initialView()` (no history → first bar mid-pane; history →
-   today's open near the left) and `follow()` (slide only while the newest bar is being watched;
+   `shiftVisibleRangeOnNewBar` is off; `initialView(k)` anchors on the clock's bar (no history →
+   mid-pane; history → today's open near the left unless the clock bar would be off-screen) and `follow()` (slide only while the newest bar is being watched;
    restore the range after `setData`, which otherwise keeps the right gap and shoves bars off). Panes sync logical
    ranges only when intervals match. Chart times are fake-UTC seconds displayed as ET wall clock.
    The date picker is a custom calendar enabling only `/api/sessions` days (data-driven, so a
    weekend-trading source would show weekends). **No forward interpolation** (SPEC §4B amended).
-3. **Mark + score** — key handling, pricing as above, journal each closed round-trip to
-   `journal/trades.jsonl`.
+   Indicators are **per pane** (`pane.ind`, chips in the pane header); EMA/BB carry a length
+   and a SOURCE timeframe (`mtfSource` + `Engine.mtfEMA/mtfBB`): at a display instant the value
+   = completed source closes before it + the price as of it (TradingView's developing HTF value),
+   warmed up on history when the source is ≥1m. Wheel over the price axis zooms price via the
+   main series' `autoscaleInfoProvider` (`pane.vzoom`); overlays never stretch the scale.
+   TradingView-style legend + crosshair sync (`mapTime`); splitters persist in `S.layout`.
+3. **Mark + score** — `Engine.canOpen/canClose` (long-only, one position, refused in REVIEW),
+   `optionPnl`, `excursion` (MFE/MAE), `tradeMarkers` (reveal with the clock in BLIND). Seeking
+   before an open entry is clamped; REVIEW is refused while in a position. Journal panel tabs:
+   Practice / Real (broker) / Uploaded; markers per source colour.
 
 All trade overlays (broker history from the companion repo's `order_history.json`, uploaded
 CSV/JSON, practice marks) normalize to one canonical trade schema (SPEC §4C) so the renderer is

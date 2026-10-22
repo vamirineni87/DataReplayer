@@ -112,13 +112,43 @@ def spy_tick_rows():
     return pd.DataFrame(rows)
 
 
+def order_history_fills():
+    """order_history.json-shaped fills (times UTC; SESSION is EDT so ET = UTC-4)."""
+    def f(key, sym, amt, px, cash, eff, hhmmss, day=SESSION, exp=False, fee=0.65):
+        return key, {'key': key, 'symbol': sym, 'asset_type': 'OPTION', 'amount': amt, 'qty': abs(amt),
+                     'price': px, 'mult': 100.0, 'net_cash': cash, 'fee': fee, 'position_effect': eff,
+                     'is_expiration': exp, 'time': f'{day}T{hhmmss}+0000', 'date': str(day)}
+    rows = [
+        # scale in 2, scale out 2 (same day): one round trip
+        f('a1', 'SPXW  260828C07750000', 1, 10.0, -1000.65, 'OPENING', '14:00:00'),
+        f('a2', 'SPXW  260828C07750000', 1, 11.0, -1100.65, 'OPENING', '14:01:00'),
+        f('a3', 'SPXW  260828C07750000', -2, 12.0, 2398.70, 'CLOSING', '14:05:00', fee=1.3),
+        # opened the prior day, closed today
+        f('b1', 'SPY   260828P00500000', 3, 2.0, -600.0, 'OPENING', '19:00:00', day=PRIOR, fee=0),
+        f('b2', 'SPY   260828P00500000', -3, 1.0, 300.0, 'CLOSING', '14:30:00', fee=0),
+        # long put expiring worthless: closing leg at 0 + the broker's OPENING bookkeeping leg
+        f('c1', 'SPXW  260828P07700000', 1, 1.5, -150.0, 'OPENING', '15:00:00', fee=0),
+        f('c2', 'SPXW  260828P07700000', -1, 0.0, 0.0, 'CLOSING', '21:01:00', exp=True, fee=0),
+        f('c3', 'SPXW  260828P07700000', 1, 0.0, 0.0, 'OPENING', '21:01:00', exp=True, fee=0),
+        # short call, another day entirely: must not appear on SESSION
+        f('d1', 'SPXW  260827C07800000', -1, 3.0, 300.0, 'OPENING', '15:00:00', day=PRIOR, fee=0),
+        f('d2', 'SPXW  260827C07800000', 1, 1.0, -100.0, 'CLOSING', '16:00:00', day=PRIOR, fee=0),
+    ]
+    return dict(rows)
+
+
 class FakeArchive:
     """Context manager: writes the fixture archive and points config at it."""
 
     def __enter__(self):
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
-        self._saved = (config.THETA_PARQUET, config.THETA_STOCK, config.CACHE_DIR)
+        self._saved = (config.THETA_PARQUET, config.THETA_STOCK, config.CACHE_DIR,
+                       config.JOURNAL_PATH, config.ORDER_HISTORY)
+        config.JOURNAL_PATH = root / 'journal' / 'trades.jsonl'       # never the real journal
+        config.ORDER_HISTORY = root / 'order_history.json'
+        import json as _json
+        config.ORDER_HISTORY.write_text(_json.dumps({'fills': order_history_fills()}), encoding='utf-8')
         config.THETA_PARQUET = root / 'parquet'
         config.THETA_STOCK = root / 'stock'
         config.CACHE_DIR = root / 'project_cache'
@@ -147,5 +177,6 @@ class FakeArchive:
         return out
 
     def __exit__(self, *exc):
-        config.THETA_PARQUET, config.THETA_STOCK, config.CACHE_DIR = self._saved
+        (config.THETA_PARQUET, config.THETA_STOCK, config.CACHE_DIR,
+         config.JOURNAL_PATH, config.ORDER_HISTORY) = self._saved
         self._tmp.cleanup()
