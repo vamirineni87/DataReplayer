@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DataReplayer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <span class="brand">DataReplayer</span>
+  <label>Root <select id="root"><option>SPXW</option><option>SPY</option><option>QQQ</option><option>IWM</option></select></label>
+  <label>DTE <select id="dte"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label>
+  <span class="group">
+    <button id="prevDay" title="Previous available session">&lsaquo;</button>
+    <input id="date" type="date">
+    <button id="nextDay" title="Next available session">&rsaquo;</button>
+  </span>
+  <button id="load" class="primary">Load</button>
+  <label>Interval <select id="interval"><option>1s</option><option>5s</option><option>15s</option><option selected>1m</option><option>5m</option></select></label>
+  <button id="mode" class="mode blind" title="Toggle blind / review (v)">BLIND</button>
+  <span id="note" class="note"></span>
+  <button id="helpBtn" class="right" title="Keyboard help (?)">?</button>
+</header>
+
+<main>
+  <section class="charts">
+    <div id="chartU" class="chart"></div>
+    <div id="chartO" class="chart small"></div>
+  </section>
+  <aside class="hud">
+    <div id="clock" class="clock">--:--:--</div>
+    <div class="row"><span id="playState">PAUSED</span><span id="speed">1×</span></div>
+    <div class="row"><span>Underlying</span><b id="uPx">—</b></div>
+    <div class="row muted"><span>Offset</span><span id="offset">0 (ATM)</span></div>
+    <div class="opt call">
+      <div class="row"><b>CALL</b><span id="cStrike">—</span></div>
+      <div class="quote"><span>bid <b id="cBid">—</b></span><span>mid <b id="cMid">—</b></span><span>ask <b id="cAsk">—</b></span></div>
+      <div class="age" id="cAge"></div>
+    </div>
+    <div class="opt put">
+      <div class="row"><b>PUT</b><span id="pStrike">—</span></div>
+      <div class="quote"><span>bid <b id="pBid">—</b></span><span>mid <b id="pMid">—</b></span><span>ask <b id="pAsk">—</b></span></div>
+      <div class="age" id="pAge"></div>
+    </div>
+    <div class="meta" id="meta"></div>
+  </aside>
+</main>
+
+<footer class="transport">
+  <button id="toOpen" title="Session open (Home)">&#x23EE;</button>
+  <button id="stepBack" title="Step back one bar (&larr;)">&#x23F4;&#x23F4;</button>
+  <button id="play" class="primary" title="Play / pause (space)">&#x25B6;</button>
+  <button id="stepFwd" title="Step forward one bar (&rarr;)">&#x23F5;&#x23F5;</button>
+  <button id="slower" title="Slower ([)">&minus;</button>
+  <span id="speed2" class="speed">1×</span>
+  <button id="faster" title="Faster (])">+</button>
+  <input id="timeline" type="range" min="0" max="1" step="1000" value="0">
+  <input id="goto" type="text" placeholder="10:32" title="Jump to ET time (g)" size="8">
+</footer>
+
+<div id="overlay" class="overlay hidden"><div id="overlayMsg"></div></div>
+
+<div id="help" class="overlay hidden">
+  <div class="help">
+    <h2>Keys</h2>
+    <table>
+      <tr><td>space</td><td>play / pause</td></tr>
+      <tr><td>&rarr; / &larr;</td><td>step one bar forward / back</td></tr>
+      <tr><td>[ / ]</td><td>speed down / up (0.25× … 60×, Max)</td></tr>
+      <tr><td>Home / End</td><td>jump to open / close</td></tr>
+      <tr><td>, / .</td><td>strike offset − / + (+ = OTM)</td></tr>
+      <tr><td>v</td><td>toggle BLIND (future hidden) / REVIEW (whole day)</td></tr>
+      <tr><td>g</td><td>jump to a time (type 10:32, Enter)</td></tr>
+      <tr><td>?</td><td>this help · Esc closes</td></tr>
+    </table>
+    <p class="muted">Trading keys (c / p / x, qty ; ') arrive in Phase 3.</p>
+  </div>
+</div>
+
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -17,6 +17,14 @@ priced exactly as the live tool prices (entry at the option **mid**, exit at the
 - Options tick/greeks: `T:\data\ThetaData\parquet\` — SPY/QQQ/SPXW/IWM, 0–10 DTE, 2020 → 2026-08-28.
 - Stock 1s/trade quotes: `T:\data\ThetaData\stock\` — SPY/QQQ/IWM, 2018 → present.
 
+## Run
+```
+python -m replayer.server            # http://127.0.0.1:8765/  (localhost only)
+python -m replayer.slicer 2026-08-28 SPXW 0 --out spxw.json   # slice one session (CLI)
+python tests/run_all.py              # offline tests
+```
+Deep link: `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review`. Press `?` in the UI for keys.
+
 ## Stack
 Python (`pandas` + `pyarrow`) slicer + stdlib HTTP server; static HTML + TradingView
 **lightweight-charts** (MIT). Windows 11. No build step, no cloud, no database.

@@ -342,6 +342,10 @@ Build the clock like this:
   search the cursor to the last sample ≤ clock and draw up to there — O(log n), never a per-tick
   loop. For the underlying **line**, **interpolate** between the straddling samples so the dot/
   line glides rather than jumps.
+  > **Build decision (2026-10-22): no forward interpolation.** Interpolating toward the *next*
+  > sample reads a future price and leaks the next tick's direction, violating §5 rules 1 and 8.
+  > The build keeps motion smooth with the fixed-rate clock + the in-progress (partial) candle
+  > built only from samples ≤ clock, and never interpolates forward.
 - **Pre-bucket candles** at the chosen interval in the slicer so the chart appends a finished
   bar with `series.update()` only when the clock crosses a bar boundary (cheap), while a
   separate smooth marker shows the within-bar price.
