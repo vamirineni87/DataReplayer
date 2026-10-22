@@ -33,8 +33,10 @@ open: data horizon (Schwab L1). Journal = standalone `journal/trades.jsonl` for 
 `order_history.json` shape (operator's choice) or a practice export; real trades are read
 (read-only) from the companion repo's `order_history.json` (path: `config.ORDER_HISTORY`).
 
-User-facing docs: `README.md` + `docs/GUIDE.md` (feature tour, screenshots in
-`docs/screenshots/`). Retake screenshots against a server with `REPLAYER_JOURNAL` pointing at a
+User-facing docs (the repo is meant to be public): `README.md`, `docs/GUIDE.md` (feature tour,
+screenshots in `docs/screenshots/`), `docs/DATA.md` (expected archive layout/columns, trade-file +
+journal schemas, slice JSON, API), `docs/DESIGN.md` (pricing contract, no-look-ahead rules, data
+quirks, architecture). Keep them in sync when behaviour or schemas change. Retake screenshots against a server with `REPLAYER_JOURNAL` pointing at a
 scratch file and `ORDER_HISTORY` at a missing file, so no private trades appear in them.
 
 ## Commands
@@ -191,9 +193,12 @@ CSV/JSON, practice marks) normalize to one canonical trade schema (SPEC §4C) so
 source-agnostic. Overlays may *display* equity/short/multi-leg trades; the sim only *simulates*
 long single options.
 
-Config (env or JSON): `THETA_PARQUET=T:\data\ThetaData\parquet`,
-`THETA_STOCK=T:\data\ThetaData\stock`, `SCHWAB_REC=T:\data\schwab-recordings\parquet`,
-`STRIKE_WINDOW=15`, default speed, RTH close per asset class.
+Config (`replayer/config.py`): env var > `config.local.json` (git-ignored; the operator's copy
+points at `T:\data\ThetaData\…` and the companion repo's `order_history.json`) > project-relative
+defaults (`data/…`, `./order_history.json`). Keys: `THETA_PARQUET`, `THETA_STOCK`, `SCHWAB_REC`,
+`OPTIONS_FIRST`/`OPTIONS_LAST`, `STRIKE_WINDOW`, `REPLAYER_CACHE`, `REPLAYER_JOURNAL`,
+`ORDER_HISTORY`; relative paths resolve against the project dir. Never hard-code a machine path
+in code — the repo is public.
 
 ## Privacy
 - `order_history.json`, journals, and any uploaded trade files are **private financial data**.

@@ -14,6 +14,8 @@ venv/
 
 # Local config / editor
 .env
+config.local.json
+*.bak
 .claude/settings.local.json
 .vscode/
 .idea/

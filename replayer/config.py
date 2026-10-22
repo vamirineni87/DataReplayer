@@ -1,24 +1,44 @@
-"""Archive roots and tunables. Env vars override defaults (SPEC §6).
+"""Archive roots and tunables (SPEC §6).
+
+Each setting resolves as: environment variable > `config.local.json` in the project root
+(git-ignored; see `config.example.json`) > the built-in default below.
 
 Archives are READ-ONLY: nothing in this project ever writes under these roots.
 """
+import json
 import os
 from datetime import date
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
-THETA_PARQUET = Path(os.getenv('THETA_PARQUET', r'T:\data\ThetaData\parquet'))
-THETA_STOCK = Path(os.getenv('THETA_STOCK', r'T:\data\ThetaData\stock'))
-SCHWAB_REC = Path(os.getenv('SCHWAB_REC', r'T:\data\schwab-recordings\parquet'))
+try:
+    _LOCAL = json.loads((PROJECT_DIR / 'config.local.json').read_text(encoding='utf-8'))
+except FileNotFoundError:
+    _LOCAL = {}
 
-CACHE_DIR = Path(os.getenv('REPLAYER_CACHE', str(PROJECT_DIR / 'cache')))
 
-STRIKE_WINDOW = int(os.getenv('STRIKE_WINDOW', '15'))
+def _setting(name: str, default: str) -> str:
+    return os.getenv(name) or str(_LOCAL.get(name, default))
 
-# Options archive horizon (one-time bulk harvest) — SPEC §2a.
-OPTIONS_FIRST = date(2020, 1, 3)
-OPTIONS_LAST = date(2026, 8, 28)
+
+def _path(name: str, default: Path) -> Path:
+    """A path setting; relative values resolve against the project directory."""
+    p = Path(_setting(name, str(default)))
+    return p if p.is_absolute() else PROJECT_DIR / p
+
+
+THETA_PARQUET = _path('THETA_PARQUET', PROJECT_DIR / 'data' / 'ThetaData' / 'parquet')
+THETA_STOCK = _path('THETA_STOCK', PROJECT_DIR / 'data' / 'ThetaData' / 'stock')
+SCHWAB_REC = _path('SCHWAB_REC', PROJECT_DIR / 'data' / 'schwab-recordings' / 'parquet')
+
+CACHE_DIR = _path('REPLAYER_CACHE', PROJECT_DIR / 'cache')
+
+STRIKE_WINDOW = int(_setting('STRIKE_WINDOW', '15'))
+
+# Options archive horizon (first / last session with option ticks) — SPEC §2a.
+OPTIONS_FIRST = date.fromisoformat(_setting('OPTIONS_FIRST', '2020-01-03'))
+OPTIONS_LAST = date.fromisoformat(_setting('OPTIONS_LAST', '2026-08-28'))
 
 ROOTS = ('SPY', 'QQQ', 'SPXW', 'IWM')
 STOCK_ROOTS = ('SPY', 'QQQ', 'IWM')      # SPXW has no stock tape (index)
@@ -50,9 +70,8 @@ def vp_row_size(sym: str) -> float:
 HISTORY_MAX_DAYS = 10
 
 # Practice journal (private; git-ignored) and the operator's broker fills (read-only, never written).
-JOURNAL_PATH = Path(os.getenv('REPLAYER_JOURNAL', str(PROJECT_DIR / 'journal' / 'trades.jsonl')))
-ORDER_HISTORY = Path(os.getenv('ORDER_HISTORY',
-                               r'E:\Programming\TradingBot\Schwab-TradingBotLite\order_history.json'))
+JOURNAL_PATH = _path('REPLAYER_JOURNAL', PROJECT_DIR / 'journal' / 'trades.jsonl')
+ORDER_HISTORY = _path('ORDER_HISTORY', PROJECT_DIR / 'order_history.json')
 
 # Sub-second replay: snapshots of the forming 1s bar at each SUB_MS boundary (only where trades
 # changed it), so the in-progress candle moves with the tape's real tempo within a second.

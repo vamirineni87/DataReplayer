@@ -8,6 +8,8 @@ from fixtures import CLOSE_MS, EXPIRY, OPEN_MS, SESSION, FakeArchive, osi, spxw_
 from replayer import config, slicer
 from replayer.slicer import NoData
 
+REAL_PARQUET = config.THETA_PARQUET      # the configured archive, captured before any FakeArchive
+
 
 def _raises(exc, fn, *a, **kw):
     try:
@@ -230,10 +232,9 @@ def test_cache_written_only_under_project_cache():
 def test_real_archive_spxw_0dte_maps_to_rth():
     """SPEC §5 rule 2: real SPXW 0DTE first/last option rows ~09:30 / ~16:00 ET."""
     import unittest
-    from pathlib import Path
-    real = Path(r'T:\data\ThetaData\parquet')
+    real = REAL_PARQUET
     if not (real / '2026' / '08' / '2026-08-28' / 'tick_SPXW_2026-08-28.parquet').exists():
-        raise unittest.SkipTest('T: archive not mounted')
+        raise unittest.SkipTest('real archive not available (config.THETA_PARQUET)')
     saved = config.THETA_PARQUET
     config.THETA_PARQUET = real
     try:

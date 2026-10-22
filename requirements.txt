@@ -1,0 +1,5 @@
+numpy>=2.0
+pandas>=2.2
+pyarrow>=15
+# optional: authoritative NYSE calendar (a computed holiday set is used without it)
+pandas_market_calendars>=4.4

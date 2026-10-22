@@ -1,0 +1,9 @@
+{
+  "THETA_PARQUET": "D:/market-data/ThetaData/parquet",
+  "THETA_STOCK": "D:/market-data/ThetaData/stock",
+  "OPTIONS_FIRST": "2020-01-03",
+  "OPTIONS_LAST": "2026-08-28",
+  "ORDER_HISTORY": "D:/trading/order_history.json",
+  "REPLAYER_JOURNAL": "journal/trades.jsonl",
+  "STRIKE_WINDOW": 15
+}

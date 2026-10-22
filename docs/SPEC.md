@@ -3,6 +3,10 @@
 *Spec authored 2026-10-22. Target build dir: `E:\Programming\TradingBot\DataReplayer`.*
 *Companion repo (reference only, do NOT import): `E:\Programming\TradingBot\Schwab-TradingBotLite`.*
 
+> **Note (public repo):** this is the original build spec, kept as written. Paths such as `T:\data\…`
+> are the author's machine; yours come from `config.local.json` (see `docs/DATA.md`). Where the
+> build diverged (e.g. no forward interpolation, §4B), `docs/DESIGN.md` describes what shipped.
+
 ---
 
 ## 0. One-paragraph summary

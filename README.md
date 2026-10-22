@@ -1,53 +1,118 @@
 # DataReplayer
 
-A local, browser-based **historical option replay trainer**. Replay a past trading day
-from a local ThetaData tick archive and practice 0–2 DTE options entries with the same
-keys as the live hotkey tool (`c` buy call / `p` buy put / `x` close) — each marked trade
-priced exactly as the live tool prices (entry at the option **mid**, exit at the option
-**bid**), so practice fills equal reality.
+A local, browser-based **historical option replay trainer**. Replay a past trading day from your
+own tick archive and practice 0–2 DTE option entries with hotkeys (`c` buy call / `p` buy put /
+`x` close). Every practice fill is priced the way a real one would have been: entry at the option
+**mid** and exit at the **bid**, re-priced to the exact millisecond. Nothing after the replay
+clock is ever shown.
 
-> Training/replay only. **Not** a backtester, **not** a live trader, never places orders.
+> Training and replay only. **Not** a backtester, **not** a live trader. It never places orders,
+> never talks to a broker, and never streams live data.
 
 ![DataReplayer: SPY 1m + 1s with VWAP bands, volume profile, practice trades and the side panel](docs/screenshots/trading.png)
 
-**Feature tour with screenshots: [`docs/GUIDE.md`](docs/GUIDE.md).**
+## Features
 
-## Start here
-1. **[`docs/SPEC.md`](docs/SPEC.md)** — the full build spec (architecture, data, pricing contract, phases).
-2. **`T:\data\ThetaData\THETA_ARCHIVE_HANDOFF.md`** — authoritative data provenance; read before touching data.
-3. **`CLAUDE.md`** — build guardrails (read-only archives, privacy, tests).
+- **Tick-faithful replay** of one session at 0.25×–60× (or Max), with a smooth clock, step / seek
+  / jump-to-time, and **BLIND** (future hidden) or **REVIEW** (whole day) modes.
+- **TradingView-style charts**, each pane with its own source and interval: SPY 1m + 1s by
+  default, plus underlying and option C/P views. They include:
+  - session VWAP with ±1.8/2/2.2/2.5/3σ bands;
+  - a developing POC / VAH / VAL and volume profile;
+  - volume, and tape speed (trades per bar);
+  - EMA and Bollinger bands on any source timeframe (1s … 1h, 1D).
+- **Prior-day context:** 3 / 5 / 10 earlier sessions on the 1m chart, each with its own VWAP and
+  profile.
+- **Sub-second replay:** the forming bar moves with the tape four times a second, and is never
+  ahead of the clock.
+- **Practice trading:** offset and quantity, a position card with unrealized P&L and MFE / MAE,
+  and entry→exit lines with P&L drawn on the chart. A journal keeps the trades, with Export and
+  Reset.
+- **Trade overlays:** your real broker fills (read-only, from an `order_history.json`) or an
+  uploaded JSON, paired into round trips and drawn on the chart.
+- **Random blind practice:** load a random session with its date hidden until you reveal it.
+- **No look-ahead anywhere.** This is the integrity core, and it is unit-tested. See
+  [docs/DESIGN.md](docs/DESIGN.md).
 
-## Data (read-only, on the `T:` NAS)
-- Options tick/greeks: `T:\data\ThetaData\parquet\` — SPY/QQQ/SPXW/IWM, 0–10 DTE, 2020 → 2026-08-28.
-- Stock 1s/trade quotes: `T:\data\ThetaData\stock\` — SPY/QQQ/IWM, 2018 → present.
+**Tour with screenshots: [docs/GUIDE.md](docs/GUIDE.md).**
 
-## Run
+## Requirements
+
+- Python 3.11+ with `numpy`, `pandas`, `pyarrow` (`pip install -r requirements.txt`).
+  `pandas_market_calendars` is optional (exact NYSE holidays; a computed set is used without it).
+- A modern browser. The chart library loads from unpkg, so the first load needs internet access.
+- Node 18+ only to run the JS engine tests.
+- **Your own market data.** No data is included. The tool expects a ThetaData-style parquet
+  archive:
+  - options: per-expiry tick files with the NBBO, plus greeks for index roots;
+  - stocks: 1s quotes and per-trade tapes.
+
+  Roots SPY, QQQ, IWM and SPXW are supported. The exact layout, columns and conventions are in
+  **[docs/DATA.md](docs/DATA.md)**.
+
+## Setup
+
 ```
-python -m replayer.server            # http://127.0.0.1:8765/  (localhost only)
-python -m replayer.slicer 2026-08-28 SPXW 0 --out spxw.json   # slice one session (CLI)
-python tests/run_all.py              # offline tests
+pip install -r requirements.txt
+cp config.example.json config.local.json      # then point it at your archive
+python -m replayer.server                     # http://127.0.0.1:8765/  (localhost only)
 ```
-Deep link: `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review&view=tv`. Press `?` in the UI for keys.
 
-Views: **TradingView** (SPY 1m + SPY 1s, VWAP ±1.8/2/2.2/2.5/3σ bands, volume, tape speed,
-developing POC/VAH/VAL + volume profile — SPY is the chart proxy for SPXW), **Classic** (underlying +
-option C/P mids), **SPY 1m + options**, or **Custom** (pick Source + Interval per pane).
-**History** adds 0/3/5/10 prior days to 1m+ panes, each with its own VWAP and volume profile.
-Per-pane indicator chips; EMA / BB take a length and a source timeframe (1s … 1h, or 1D for e.g. a
-20-day EMA). The forming bar updates 4×/s with the tape (never ahead of the clock).
+`config.local.json` is git-ignored. Every key can also be set as an environment variable:
 
-Trading: `c` / `p` buy the offset-selected call / put at the mid, `x` closes at the bid (BLIND
-only, long only, one position; re-priced at the exact ms); `,` `.` offset, `;` `'` qty. Trades draw
-entry→exit lines with P&L. The trades list lives in the right-hand panel under the quotes: Practice
-(`journal/trades.jsonl`, private, git-ignored; Export / Reset), Real (from the companion repo's
-`order_history.json`, read-only) and Uploaded (drop a JSON in `order_history.json` shape or a
-practice export). Price axis: scroll or drag to unlock (then the chart pans freely), **A** /
-double-click re-locks. 🎲 Random (`r`) loads a random session with the date hidden until Reveal.
+- `THETA_PARQUET`, `THETA_STOCK`: the archive roots;
+- `OPTIONS_FIRST`, `OPTIONS_LAST`: your archive's date range;
+- `ORDER_HISTORY`: optional broker fills;
+- `REPLAYER_JOURNAL`, `REPLAYER_CACHE`, `STRIKE_WINDOW`.
+
+Other commands:
+
+```
+python tests/run_all.py                                   # offline tests (synthetic archive)
+python -m replayer.slicer 2026-08-28 SPXW 0 --out s.json  # slice one session to JSON (CLI)
+```
+
+Deep link: `/?root=SPXW&dte=0&date=2026-08-28&t=10:32&mode=review&view=tv&speed=60&play=1`.
+Press `?` in the UI for all keys.
+
+## Keys
+
+| Key | Action |
+|---|---|
+| `c` / `p` / `x` | buy call @ mid / buy put @ mid / close @ bid (BLIND only, long only, one position) |
+| `,` `.` / `;` `'` | strike offset − / + (+ = OTM) / quantity − / + |
+| `space` | play / pause |
+| `←` `→` | step one bar (Shift steps by the coarsest pane) |
+| `[` `]` | speed down / up |
+| `Home` `End` | jump to the open / close |
+| `g` | go to a time |
+| `v` | BLIND / REVIEW |
+| `r` | random blind session |
+| `j` | trades list |
+| `?` | help |
+
+Mouse: drag the chart to pan; scroll or drag the price axis to unlock price (**A** or a
+double-click re-locks it); **⟫** jumps back to the newest bar; drag the dividers to resize.
+
+## Privacy
+
+Your practice journal (`journal/`), uploads, `order_history.json`, `config.local.json` and the
+cache are git-ignored and stay on your machine. The broker file is only ever read. The server
+binds to `127.0.0.1`.
+
+## Docs
+
+- [docs/GUIDE.md](docs/GUIDE.md): feature tour with screenshots.
+- [docs/DATA.md](docs/DATA.md): expected archive layout and columns, time conventions,
+  trade-condition filters, trade-file and journal schemas, slice JSON, HTTP API.
+- [docs/DESIGN.md](docs/DESIGN.md): the pricing contract, the no-look-ahead rules, the data
+  quirks handled, the architecture and the tests.
+- [docs/SPEC.md](docs/SPEC.md): the original build spec. Its paths are the author's setup; yours
+  come from `config.local.json`.
+- [CLAUDE.md](CLAUDE.md): guardrails for AI-assisted development in this repo.
 
 ## Stack
-Python (`pandas` + `pyarrow`) slicer + stdlib HTTP server; static HTML + TradingView
-**lightweight-charts** (MIT). Windows 11. No build step, no cloud, no database.
 
-## MVP (SPEC §7, end of Phase 3)
-Load SPXW 2026-08-28 0DTE → play from 09:30 ET → `c` → unrealized P&L tracks the bid →
-`x` → realized P&L = `(exit_bid − entry_mid) × 100`, read-only and with no look-ahead.
+Python (`pandas` + `pyarrow`) slicer and a stdlib HTTP server; static HTML/JS with TradingView
+[lightweight-charts](https://github.com/tradingview/lightweight-charts) 4.2 (Apache-2.0). No
+build step, no cloud, no database.
