@@ -11,8 +11,8 @@ Read **`SPEC.md`** (full spec) and **`T:\data\ThetaData\THETA_ARCHIVE_HANDOFF.md
 (data provenance) before writing code.
 
 ## Status
-As of 2026-10-22 the repo holds only `SPEC.md`, `README.md`, and this file — no code yet, not a
-git repo. Build in the SPEC §7 phases (each independently runnable):
+As of 2026-10-22 the repo holds only `SPEC.md`, `README.md`, and this file — no code yet. Git remote:
+`https://github.com/vamirineni87/DataReplayer` (private). Build in the SPEC §7 phases (each independently runnable):
 1. **Slicer CLI** — `2026-08-28 SPXW 0` → compact JSON (no UI).
 2. **Smooth chart + clock** — served `index.html`, replay engine, blind reveal. No trading.
 3. **MVP** — `c`/`p`/`x` marking, P&L, journal, trade overlays + CSV/JSON import.
