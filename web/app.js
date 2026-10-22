@@ -938,7 +938,7 @@
     if (!osi) return toast(`No ${type === 'C' ? 'call' : 'put'} contract at this offset`, 'err');
     const q = quoteNow(osi);
     if (!q) return toast('No quote yet for that contract', 'err');
-    const c = S.data.contracts[osi], t = S.clock;
+    const c = S.data.contracts[osi], t = Math.floor(S.clock);   // clock is fractional mid-playback
     S.pos = { osi, type, strike: c.strike, qty: S.qty, entry_t: t, entry_mid: q.mid, offset: S.offset, exact: false };
     S.tradesVer++;
     toast(`BUY ${type} ${c.strike} ×${S.qty} @ ${q.mid.toFixed(2)} (mid) · ${E.fmtClock(t)}`, 'ok');
@@ -955,7 +955,7 @@
     if (!S.data) return;
     const why = E.canClose(S.pos);
     if (why) return toast(why, 'err');
-    const pos = S.pos, t = S.clock;
+    const pos = S.pos, t = Math.floor(S.clock);
     let q = quoteNow(pos.osi);
     try { q = await exactQuote(pos.osi, t); } catch (e) { toast(`Exact re-price failed (${e.message}); using 1s data`, 'err'); }
     if (!q) return toast('No bid available to close against', 'err');

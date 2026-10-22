@@ -9,6 +9,7 @@
   history so positions opened on an earlier day close correctly.
 """
 import json
+import math
 import threading
 import uuid
 from collections import OrderedDict
@@ -109,7 +110,7 @@ def journal_append(rec: dict) -> dict:
         'side': 'long_call' if rec['type'] == 'C' else 'long_put',
         'qty': qty,
         'entry_mid': round(float(rec['entry_mid']), 4), 'exit_bid': round(float(rec['exit_bid']), 4),
-        'entry_t': int(rec['entry_t']), 'exit_t': int(rec['exit_t']),
+        'entry_t': math.floor(float(rec['entry_t'])), 'exit_t': math.floor(float(rec['exit_t'])),
         'pnl': round((float(rec['exit_bid']) - float(rec['entry_mid'])) * 100 * qty, 2),
         'offset': rec.get('offset'), 'mfe': rec.get('mfe'), 'mae': rec.get('mae'),
         'note': rec.get('note', ''), 'tag': rec.get('tag', ''),

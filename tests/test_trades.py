@@ -94,5 +94,10 @@ def test_trade_routes():
             assert len(parsed['trades']) == 3
             q = call(f'/api/quote?date={SESSION}&root=SPXW&dte=0&osi={urllib.request.quote(osi("SPXW", "C", 7750))}&t={10 * 3600_000}')
             assert q['bid'] == 12.0
+            # mid-playback clocks are fractional ms (regression: these used to 400)
+            q = call(f'/api/quote?date={SESSION}&root=SPXW&dte=0&osi={urllib.request.quote(osi("SPXW", "C", 7750))}&t={10 * 3600_000 + 0.6}')
+            assert q['bid'] == 12.0 and q['t'] == 10 * 3600_000
+            saved = call('/api/journal', 'POST', {**rec, 'entry_t': OPEN_MS + 0.6, 'exit_t': OPEN_MS + 60000.4})
+            assert saved['entry_t'] == OPEN_MS and saved['exit_t'] == OPEN_MS + 60000
         finally:
             srv.shutdown()

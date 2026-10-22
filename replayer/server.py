@@ -17,6 +17,7 @@ Routes:
 import argparse
 import gzip
 import json
+import math
 import mimetypes
 import sys
 import threading
@@ -115,7 +116,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _quote(self, q):
         self._json(200, trades.quote_at(date.fromisoformat(q['date']), q['root'].upper(), int(q['dte']),
-                                        q['osi'], int(q['t'])))
+                                        q['osi'], math.floor(float(q['t']))))
 
     def _journal_get(self, q):
         self._json(200, {'trades': trades.journal_read(q.get('date'), q.get('root'))})
