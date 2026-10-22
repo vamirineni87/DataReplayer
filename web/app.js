@@ -274,10 +274,10 @@
       this.i = i; this.box = $(`pane${i}`); this.host = $(`chart${i}`); this.legendEl = $(`legend${i}`);
       this.srcSel = $(`src${i}`); this.ivSel = $(`iv${i}`); this.indEl = $(`ind${i}`);
       this.kind = 'chart'; this.iv = '1m'; this.ind = defaultInd();
-      this.chart = null; this.layers = []; this.profile = null; this.hrows = []; this.vzoom = 1;
+      this.chart = null; this.layers = []; this.profile = null; this.hrows = []; this.lock = null;
       this.hover = false; this.markerKey = '';
       this.R = { clock: null, k: -1, mode: '', sel: '', full: true, fresh: true };
-      this.following = true; this.dragging = false; this.vpan = false;
+      this.following = true; this.dragging = false; this.axisPress = false;
       this.bindAxisZoom();
       this.bindPan();
     }
@@ -513,21 +513,27 @@
         if (L.series === this.main) {
           L.series.applyOptions({
             autoscaleInfoProvider: (orig) => {
+              if (!this.lock) return orig();
               const r = orig();
-              if (!r || !r.priceRange || this.vzoom === 1) return r;
-              const { minValue: lo, maxValue: hi } = r.priceRange, mid = (lo + hi) / 2, h = ((hi - lo) / 2 || 0.01) * this.vzoom;
-              return { ...r, priceRange: { minValue: mid - h, maxValue: mid + h } };
+              return { ...(r || {}), priceRange: { minValue: this.lock.lo, maxValue: this.lock.hi } };
             },
           });
         } else if (L.series.options().priceScaleId !== 'vol') {
-          // overlays never stretch the scale; VWAP/EMA count only while not zoomed
-          L.series.applyOptions({ autoscaleInfoProvider: (orig) => (L.overlay || this.vzoom !== 1 ? null : orig()) });
+          // overlays never stretch the scale; VWAP/EMA count only while auto
+          L.series.applyOptions({ autoscaleInfoProvider: (orig) => (L.overlay || this.lock ? null : orig()) });
         }
       }
     }
-    // ---- free panning (TradingView-like): drag sideways pans time; a vertical drag turns
-    // auto-scale off so price pans too. While the operator drags, the replay never moves the
-    // view; on release, follow mode stays off if the newest bar is out of view (⟫ resumes).
+    // ---- TradingView-style price scale.
+    // AUTO (default): price follows the data; dragging the chart pans time only.
+    // UNLOCKED: scrolling (or dragging) on the price axis freezes the range — wheel zooms around the
+    //   price under the cursor; dragging the chart then moves it freely up/down as well as
+    //   sideways; playback no longer rescales. "A" or double-clicking the axis re-locks to auto.
+    // The unlocked range is served through the main series' autoscaleInfoProvider (`this.lock`,
+    // other series report nothing), because lightweight-charts 4.2 has no public price-range
+    // setter. A native axis drag also unlocks (the library's own manual mode) — both show "A".
+    // While the operator drags, the replay never moves the view; on release follow mode stays off
+    // if the newest bar is out of view (⟫ resumes).
     bindPan() {
       const wrap = this.host.parentElement;
       const mk = (cls, text, title, onClick) => {
@@ -540,18 +546,23 @@
       this.liveBtn = mk('live', '⟫', 'Scroll to the newest bar and follow it', () => this.goLive());
       this.autoBtn = mk('auto', 'A', 'Auto-scale price (double-click the price axis also resets)', () => this.autoScale());
       this.host.addEventListener('pointerdown', (ev) => {
-        if (!this.chart || ev.button !== 0 || this.onAxis(ev)) return;
+        if (!this.chart || ev.button !== 0) return;
+        if (this.onAxis(ev)) { this.axisPress = true; return; }
         this.dragging = true; this.dragY = ev.clientY;
       }, { capture: true });
       window.addEventListener('pointermove', (ev) => {
-        if (!this.dragging || !this.chart || this.vpan) return;
-        if (Math.abs(ev.clientY - this.dragY) > 6) {            // vertical intent: free price panning
-          this.vpan = true;
-          this.chart.priceScale('right').applyOptions({ autoScale: false });
-          this.autoBtn.classList.remove('hidden');
-        }
+        if (!this.dragging || !this.chart || !this.lock) return;
+        const dy = ev.clientY - this.dragY;                     // unlocked: pan price with the drag
+        this.dragY = ev.clientY;
+        if (!dy) return;
+        const ppx = this.pricePerPixel(this.lock);
+        if (ppx) this.setLock({ lo: this.lock.lo + dy * ppx, hi: this.lock.hi + dy * ppx });
       });
       window.addEventListener('pointerup', () => {
+        if (this.axisPress) {                                     // native axis drag unlocks too
+          this.axisPress = false;
+          if (this.chart && !this.chart.priceScale('right').options().autoScale) this.autoBtn.classList.remove('hidden');
+        }
         if (!this.dragging) return;
         this.dragging = false;
         this.checkFollow();
@@ -562,6 +573,24 @@
       if (!this.chart) return false;
       const rect = this.host.getBoundingClientRect();
       return ev.clientX > rect.right - this.chart.priceScale('right').width();
+    }
+    paneHeight() { return this.host.clientHeight - this.chart.timeScale().height(); }
+    // The data range [lo, hi] maps to the pane between the scale margins, so these invert exactly.
+    visiblePriceRange() {
+      const H = this.paneHeight(), m = this.chart.priceScale('right').options().scaleMargins;
+      const hi = this.main.coordinateToPrice(H * m.top), lo = this.main.coordinateToPrice(H * (1 - m.bottom));
+      return lo == null || hi == null || !(hi > lo) ? null : { lo, hi };
+    }
+    pricePerPixel(r) {
+      const H = this.paneHeight(), m = this.chart.priceScale('right').options().scaleMargins;
+      const px = H * (1 - m.top - m.bottom);
+      return px > 0 ? (r.hi - r.lo) / px : null;
+    }
+    setLock(r) {
+      this.lock = r;
+      this.chart.priceScale('right').applyOptions({ autoScale: true });   // our provider drives it
+      this.applyZoomProviders();
+      this.autoBtn.classList.toggle('hidden', !r);
     }
     lastIndex() { return this.hrows.length + Math.max(0, E.bucketOf(this.b, S.clock)); }
     checkFollow() {
@@ -580,31 +609,24 @@
     }
     autoScale() {
       if (!this.chart) return;
-      this.vpan = false; this.vzoom = 1;
-      this.chart.priceScale('right').applyOptions({ autoScale: true });
-      this.applyZoomProviders();
-      this.autoBtn.classList.add('hidden');
+      this.setLock(null);
     }
 
     bindAxisZoom() {
-      const onAxis = (ev) => {
-        if (!this.chart) return false;
-        const rect = this.host.getBoundingClientRect();
-        return ev.clientX > rect.right - this.chart.priceScale('right').width();
-      };
       this.host.addEventListener('wheel', (ev) => {
-        if (!onAxis(ev)) return;
+        if (!this.onAxis(ev) || !this.main) return;
         ev.preventDefault(); ev.stopPropagation();
-        this.vzoom = Math.max(0.05, Math.min(20, this.vzoom * (ev.deltaY > 0 ? 1.12 : 1 / 1.12)));
-        this.vpan = false; this.autoBtn.classList.add('hidden');
-        this.chart.priceScale('right').applyOptions({ autoScale: true });
-        this.applyZoomProviders();
+        const r = this.lock || this.visiblePriceRange();          // first scroll: freeze where it is
+        if (!r) return;
+        const y = ev.clientY - this.host.getBoundingClientRect().top;
+        let p = this.main.coordinateToPrice(y);
+        if (p == null || p < r.lo || p > r.hi) p = (r.lo + r.hi) / 2;
+        const f = ev.deltaY > 0 ? 1.1 : 1 / 1.1;                   // wheel up = zoom in
+        if ((r.hi - r.lo) * f < 1e-4) return;
+        this.setLock({ lo: p - (p - r.lo) * f, hi: p + (r.hi - p) * f });
       }, { capture: true, passive: false });
       this.host.addEventListener('dblclick', (ev) => {
-        if (!onAxis(ev)) return;
-        this.vzoom = 1; this.vpan = false; this.autoBtn.classList.add('hidden');
-        this.chart.priceScale('right').applyOptions({ autoScale: true });
-        this.applyZoomProviders();
+        if (this.onAxis(ev)) this.setLock(null);
       }, { capture: true });
     }
 
@@ -777,7 +799,7 @@
         if (rebuild && (R.fresh || R.mode !== S.mode)) {
           this.initialView(k);
           this.following = true; this.liveBtn.classList.add('hidden');
-          if (R.fresh) { this.vpan = false; this.autoBtn.classList.add('hidden'); }
+          if (R.fresh) { this.lock = null; this.autoBtn.classList.add('hidden'); }
         }
         else if (S.mode === 'blind') {
           if (rebuild && prevRange) ts.setVisibleLogicalRange(prevRange);   // setData shifts the view
@@ -1329,7 +1351,7 @@
       S.clock = S.meta.open_ms;
       setMode('blind');
       updateSelection();
-      for (const p of S.panes) { p.vzoom = 1; p.R.fresh = true; p.chart && p.chart.remove(); p.chart = null; p.rebuild(); }
+      for (const p of S.panes) { p.lock = null; p.R.fresh = true; p.chart && p.chart.remove(); p.chart = null; p.rebuild(); }
       showMeta();
       renderJournal(true);
       overlay(null);

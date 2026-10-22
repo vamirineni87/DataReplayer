@@ -142,10 +142,14 @@ Three layers, data flowing one way:
    operator's TradingView: **blue VWAP, orange 2σ**, gray other bands. Chart panes at ≥1m prepend
    history rows (one whitespace separator per day breaks the lines); EMA20/BB(20,2) run over
    history+today closes, in-progress bar stepped from the last closed state. View: the library's
-   `shiftVisibleRangeOnNewBar` is off. Free panning: `bindPan()` — while the operator drags,
-   the replay never moves the view; a vertical drag turns auto-scale off (price pans like
-   TradingView); on release `checkFollow()` turns follow off if the newest bar is out of view.
-   Corner buttons: ⟫ (`goLive`) and A (`autoScale`). Seeks/loads re-centre and resume follow.
+   `shiftVisibleRangeOnNewBar` is off. Price scale mimics TradingView: AUTO by default (chart
+   drag pans time only); scrolling or dragging the price axis UNLOCKS it — then the chart drags
+   freely up/down too and playback stops rescaling. 4.2 has no public price-range setter, so the
+   unlocked range (`pane.lock`) is served via the main series' `autoscaleInfoProvider` (others
+   report null); `visiblePriceRange()`/`pricePerPixel()` invert the scale margins. "A" or a
+   double-click on the axis re-locks. While the operator drags, the replay never moves the view;
+   on release `checkFollow()` turns follow off if the newest bar is out of view (⟫ = `goLive`).
+   Seeks/loads re-centre and resume follow; a fresh load resets to AUTO.
    `initialView(k)` anchors on the clock's bar (no history →
    mid-pane; history → today's open near the left unless the clock bar would be off-screen) and `follow()` (slide only while the newest bar is being watched;
    restore the range after `setData`, which otherwise keeps the right gap and shoves bars off). Panes sync logical
