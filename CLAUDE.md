@@ -11,7 +11,7 @@ Read **`docs/SPEC.md`** (full spec) and **`T:\data\ThetaData\THETA_ARCHIVE_HANDO
 (data provenance) before writing code.
 
 ## Status
-Git remote: `https://github.com/vamirineni87/DataReplayer` (private). Build in the SPEC §7
+Git remote: `https://github.com/vamirineni87/DataReplayer` (**public**, MIT). Build in the SPEC §7
 phases (each independently runnable):
 1. **Slicer CLI** — done (`replayer/slicer.py`).
 2. **Smooth chart + clock** — done (`replayer/server.py`, `web/`).

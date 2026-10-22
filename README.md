@@ -116,3 +116,7 @@ binds to `127.0.0.1`.
 Python (`pandas` + `pyarrow`) slicer and a stdlib HTTP server; static HTML/JS with TradingView
 [lightweight-charts](https://github.com/tradingview/lightweight-charts) 4.2 (Apache-2.0). No
 build step, no cloud, no database.
+
+## License
+
+[MIT](LICENSE). Market data is not included and is subject to your data provider's terms.
