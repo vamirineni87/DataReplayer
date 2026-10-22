@@ -80,7 +80,7 @@
     pos: null,                           // open practice position
     journal: [], broker: [], uploads: [], brokerNote: '', tradesVer: 0,
     jtab: 'practice', show: { practice: true, broker: true, upload: true },
-    layout: { split: null, hudW: 280, jrW: 330, journal: true },
+    layout: { split: null, hudW: 330, journal: true },
   };
   const speed = () => E.SPEEDS[S.speedIdx];
   const speedLabel = () => (S.speedIdx === E.SPEEDS.length - 1 ? 'Max' : `${speed()}×`);
@@ -673,7 +673,6 @@
   function applyColumns() {
     const main = $('main');
     main.style.setProperty('--hud-w', `${S.layout.hudW}px`);
-    main.style.setProperty('--jr-w', `${S.layout.jrW}px`);
     main.classList.toggle('no-journal', !S.layout.journal);
   }
   function dragger(el, onMove) {
@@ -696,13 +695,7 @@
   });
   dragger($('vsplitHud'), (e) => {
     const r = $('main').getBoundingClientRect();
-    const right = r.right - (S.layout.journal ? S.layout.jrW + 5 : 0);
-    S.layout.hudW = Math.round(Math.max(220, Math.min(520, right - e.clientX - 2)));
-    applyColumns();
-  });
-  dragger($('vsplitJr'), (e) => {
-    const r = $('main').getBoundingClientRect();
-    S.layout.jrW = Math.round(Math.max(240, Math.min(720, r.right - e.clientX - 2)));
+    S.layout.hudW = Math.round(Math.max(260, Math.min(720, r.right - e.clientX - 2)));
     applyColumns();
   });
 
@@ -1259,7 +1252,7 @@
     if (Number.isInteger(p.offset)) S.offset = p.offset;
     if (Number.isInteger(p.qty)) S.qty = Math.max(1, p.qty);
     if (Number.isInteger(p.histDays)) S.histDays = Math.max(0, Math.min(10, p.histDays));
-    if (p.layout) S.layout = { ...S.layout, ...p.layout };
+    if (p.layout) S.layout = { ...S.layout, ...p.layout, hudW: Math.max(260, p.layout.hudW || 330) };
     if (p.show) S.show = { ...S.show, ...p.show };
     if (p.jtab) S.jtab = p.jtab;
     if (Array.isArray(p.paneInd)) p.paneInd.forEach((ind, i) => {

@@ -153,7 +153,9 @@ Three layers, data flowing one way:
    TradingView-style legend + crosshair sync (`mapTime`); splitters persist in `S.layout`.
 3. **Mark + score** — `Engine.canOpen/canClose` (long-only, one position, refused in REVIEW),
    `optionPnl`, `excursion` (MFE/MAE), `tradeMarkers` (reveal with the clock in BLIND). Seeking
-   before an open entry is clamped; REVIEW is refused while in a position. Journal panel tabs:
+   before an open entry is clamped; REVIEW is refused while in a position. The trades list lives
+   INSIDE the single right-hand side panel, under the option quotes / position (operator wants one
+   panel, not a separate journal column); tabs:
    Practice / Real (broker) / Uploaded; markers per source colour.
 
 All trade overlays (broker history from the companion repo's `order_history.json`, uploaded

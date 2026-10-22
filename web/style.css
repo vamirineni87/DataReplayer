@@ -27,11 +27,9 @@ input[type="date"] { color-scheme: dark; }
 .mode.blind { color: var(--up); border-color: var(--up); }
 .mode.review { color: var(--warn); border-color: var(--warn); }
 
-/* charts | splitter | HUD | splitter | journal — widths are CSS vars set by the splitters */
-main { --hud-w: 280px; --jr-w: 330px; display: grid; min-height: 0;
-       grid-template-columns: minmax(0, 1fr) 5px var(--hud-w) 5px var(--jr-w); }
-main.no-journal { grid-template-columns: minmax(0, 1fr) 5px var(--hud-w) 0 0; }
-main.no-journal .journal, main.no-journal #vsplitJr { display: none; }
+/* charts | splitter | side panel (quotes, ticket, position, then the trades list) */
+main { --hud-w: 330px; display: grid; min-height: 0; grid-template-columns: minmax(0, 1fr) 5px var(--hud-w); }
+main.no-journal .journal { display: none; }
 .charts { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .pane { display: flex; flex-direction: column; min-height: 60px; min-width: 0; flex: 1 1 0; }
 .pane.hidden { display: none; }
@@ -59,7 +57,8 @@ main.no-journal .journal, main.no-journal #vsplitJr { display: none; }
 .chk input { margin: 0; }
 .hidden { display: none !important; }
 
-.hud { padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.hud { padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.hud > * { flex: none; }
 .clock { font: 700 34px/1 ui-monospace, "Cascadia Mono", Consolas, monospace; text-align: center; }
 .row { display: flex; justify-content: space-between; gap: 8px; }
 .muted { color: var(--muted); }
@@ -68,7 +67,7 @@ main.no-journal .journal, main.no-journal #vsplitJr { display: none; }
 .opt.put { border-left: 3px solid var(--down); }
 .quote { display: flex; justify-content: space-between; font-family: ui-monospace, Consolas, monospace; margin-top: 4px; }
 .age { color: var(--muted); font-size: 11px; min-height: 1em; }
-.meta { color: var(--muted); font-size: 11px; white-space: pre-line; margin-top: auto; }
+.meta { color: var(--muted); font-size: 11px; white-space: pre-line; }
 
 .transport { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line); }
 .speed { min-width: 44px; text-align: center; font-family: ui-monospace, Consolas, monospace; }
@@ -113,7 +112,8 @@ kbd { font: 10px ui-monospace, Consolas, monospace; color: var(--muted); border:
 .pos { color: var(--up); } .neg { color: var(--down); }
 
 /* journal panel */
-.journal { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.hud > .journal { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 220px; min-width: 0;
+                  border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .jtabs { display: flex; border-bottom: 1px solid var(--line); }
 .jtabs button { flex: 1; border: none; border-radius: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 4px; }
 .jtabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
