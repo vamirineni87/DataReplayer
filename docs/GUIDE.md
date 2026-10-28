@@ -23,8 +23,50 @@ A tour of the replay UI with screenshots. All shots are real SPXW 0DTE sessions 
   P&L tag**; an open position draws a dotted line to now.
 - The **trades list** sits under the quotes in the same panel: tabs **Practice / Real / Uploaded**,
   per-session summary (count, win rate, total P&L), `on chart` toggle, **Upload** (JSON in
-  `order_history.json` shape or a practice export), **Export**, and **Reset** (deletes this
-  session's practice trades after a confirm). `j` hides / shows it.
+  `order_history.json` shape, a practice export, or any list of round trips), **Export**, and
+  **Reset** (deletes this session's practice trades after a confirm). `j` hides / shows it.
+- Uploaded files are **remembered across days and reloads**: a multi-day file (e.g. a backtest)
+  shows each session's trades when you load it. **Clear** forgets them. In BLIND they appear as
+  the clock reaches them — press `v` to see the whole day.
+
+## Mock trading for analysis (watch log, skips, notes)
+
+For handing your decisions to someone (or something) that will try to infer your rules:
+
+- Run with a **separate journal** for the exercise, e.g.
+  `REPLAYER_JOURNAL=journal/mock_a11.jsonl python -m replayer.server`, so older practice doesn't
+  mix in. Its watch log is written next to it (`journal/mock_a11_watch.jsonl`).
+- The **watch log** is automatic. It records:
+  - every BLIND stretch you play or step through, as *spans* grouped into *passes*;
+  - every jump back or forward;
+  - every switch to REVIEW;
+  - every Load.
+
+  It writes about every 15 s and when you leave.
+- A trade whose entry falls on time you'd already watched in an **earlier pass** (you rewound) is
+  flagged `after_rewind` (↺ in the list). One taken after REVIEW was opened on that session is
+  flagged `after_review` (R).
+- **`s` = skip:** "I saw a setup and passed". It pauses and asks for an optional reason. Enter
+  saves, Esc cancels. Skips appear in the list and as grey `skip` dots on the chart.
+- **Notes:** click a trade, a skip or the open position in the Practice list to add or edit a
+  one-line reason, for example "3rd touch, failed push". **⏱** on a row jumps the clock there. In
+  BLIND, jumping back counts as a rewind.
+- **Skip the dead zone (`n`):** jumps to the next 1s close beyond **±kσ of VWAP** (k = 1.5 by
+  default, set in the footer, and drawn as a dashed band on the charts). If price is already
+  outside, it first waits for price to come back inside and stay there for 30 s. **Stop early**
+  (30 s / 60 s / 2 m) lands before the move so you can watch the approach. The search moves forward
+  one second at a time using only data up to each second, so it lands exactly where pausing on the
+  breakout would. It's refused while you're in a position. The watch log marks these jumps
+  `rule: "zone"`, so the skipped time reads as "inside the zone, by rule".
+- **Second `n` rule, the outsized candle:** `n` also stops **2 s after** a 1s candle whose high−low
+  is at least **F×** (default 3, footer "bar ≥ F ×5m", 0 = off) the largest 1s range of the previous
+  5 minutes. That's spikes like 2026-08-14 09:51:23 ($0.63 against a 5-minute max of $0.10), which
+  fires 2–4 times a typical day. Stopping after the candle (never on or before it) keeps it
+  look-ahead-free. It needs a full 5 minutes of history, so it is quiet until 09:35. `n` goes to
+  whichever rule fires first; the watch log records which (`stop: "sigma" | "candle" | "close"`). **Ctrl+→** jumps 30 s,
+  **Ctrl+Shift+→** 5 min.
+- **Export all** downloads every practice trade plus the whole watch log in one JSON file. Or
+  point the analysis at the two `.jsonl` files directly.
 
 ## TradingView layout + prior days
 
@@ -83,6 +125,9 @@ A tour of the replay UI with screenshots. All shots are real SPXW 0DTE sessions 
 
 ![Keyboard help](screenshots/help.png)
 
+The timeline under the charts has a tape-measure ruler: a tick every 5 minutes, longer at :15 /
+:45 and :30, tallest on the hour with a small hour number.
+
 `space` play / pause · `←` `→` step a bar (Shift = coarsest pane) · `[` `]` speed (0.25× … 60×, Max)
-· `Home` / `End` open / close · `g` jump to a time · `v` BLIND / REVIEW · `r` random · `j` trades
+· `Ctrl+→` +30 s (Shift: +5 min) · `n` skip to the next ±kσ move · `Home` / `End` open / close · `s` skip · `g` jump to a time · `v` BLIND / REVIEW · `r` random · `j` trades
 list · `?` help.

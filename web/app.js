@@ -46,6 +46,12 @@
     upload: { entry: '#ba68c8', exit: '#ba68c8', win: '#ba68c8', loss: '#ba68c8' },
   };
   const HIST_MIN_IV = 60000;            // history only on 1m-or-coarser chart panes
+  // lightweight-charts 4.2 re-walks EVERY row of a series on each repaint after an update, so a
+  // series' cost grows with its length (a 1s pane at 15:40 = 22k rows x ~17 series per frame).
+  // In BLIND each series therefore holds a sliding window of the newest WIN_ROWS rows (trimmed
+  // in WIN_SLACK steps, only while following the newest bar); scrolling to its left edge
+  // grows it back by WIN_GROW rows. REVIEW (no per-frame updates) keeps everything.
+  const WIN_ROWS = 2500, WIN_SLACK = 500, WIN_GROW = 2000;
   const TF_CHOICES = ['chart', '1s', '5s', '15s', '1m', '2m', '5m', '15m', '30m', '1h', '1D'];
   const TF_MS = { ...E.INTERVALS, '15m': 900000, '30m': 1800000, '1h': 3600000 };
   const DAILY_BARS = 100;               // prior daily closes fetched for 1D EMA/BB (warm-up)
@@ -66,9 +72,19 @@
         root: $('root').value, dte: $('dte').value, date: $('date').value,
         speedIdx: S.speedIdx, offset: S.offset, qty: S.qty, view: S.view, histDays: S.histDays,
         panes: S.panes.map((p) => [p.kind, p.iv]), paneInd: S.panes.map((p) => p.ind),
-        layout: S.layout, jtab: S.jtab, show: S.show,
+        layout: S.layout, jtab: S.jtab, show: S.show, zone: S.zone,
       }));
     } catch (e) { /* private mode: prefs are a convenience only */ }
+  }
+  // Uploaded trade files are kept (raw) across reloads and day changes and re-filtered to each
+  // loaded session by /api/parse-trades. Browser storage is a convenience: if it is unavailable
+  // or full, the files still last for this page.
+  const UPLOADS_KEY = 'replayer.uploads.v1';
+  function loadUploadFiles() {
+    try { return JSON.parse(localStorage.getItem(UPLOADS_KEY)) || []; } catch (e) { return []; }
+  }
+  function saveUploadFiles() {
+    try { localStorage.setItem(UPLOADS_KEY, JSON.stringify(S.uploadFiles)); return true; } catch (e) { return false; }
   }
 
   // ------------------------------------------------------------------ state
@@ -76,16 +92,113 @@
     data: null, meta: null, sessions: [], sessionSet: new Set(), byKey: new Map(),
     clock: 0, playing: false, speedIdx: 2, offset: 0, qty: 1,
     mode: 'blind',                       // always opens blind (operator preference)
+    zone: { k: 1.5, lead: 0, big: 3 },    // n: next move beyond ±k σ (lead s early) or 2 s after a 1s candle >= big x the 5-min max range
     view: 'tv', histDays: 5, hist: { days: [] }, daily: [],
     ind: null, rowSize: 0.05, profileIdx: null, profile: null,
     sel: { key: '' }, panes: [],
     pos: null,                           // open practice position
     blindDate: false,                    // random-blind practice: the date is hidden everywhere
-    journal: [], broker: [], uploads: [], brokerNote: '', tradesVer: 0,
+    journal: [], broker: [], uploads: [], uploadFiles: loadUploadFiles(), uploadsReq: 0, brokerNote: '', tradesVer: 0,
     jtab: 'practice', show: { practice: true, broker: true, upload: true },
     layout: { split: null, hudW: 330, journal: true },
   };
   const speed = () => E.SPEEDS[S.speedIdx];
+  const esc = (x) => String(x).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+  // ------------------------------------------------------------------ watch log
+  // Records what was actually seen, for honest mock-trade analysis (trades.watch_*): BLIND spans
+  // watched, split into PASSES at every discontinuity (rewind, forward jump, REVIEW, load), plus
+  // jumps, REVIEW switches and SKIPs. Spans are flushed in pieces (same pass) every ~15 s and on
+  // load / tab hide. A fill inside a span of an EARLIER pass = after_rewind (Engine.seenBefore).
+  const W = { ready: false, loadId: '', pass: '', passN: 0, span: null, spans: [], skips: [],
+    reviewed: false, pending: [], lastClock: null, jumped: false, jumpRule: null, lastFlush: 0 };
+  const watchBase = () => ({ session_date: S.meta.session_date, root: S.meta.root, dte: S.meta.dte,
+    blind_date: !!S.blindDate, load_id: W.loadId });
+  function newPass() { W.pass = `${W.loadId}:${++W.passN}`; }
+  function openSpan() {
+    W.span = W.ready && S.mode === 'blind'
+      ? { pass: W.pass, from: S.clock, to: S.clock, max: S.speedIdx, wall: new Date().toISOString() } : null;
+  }
+  function closeSpan() {
+    const sp = W.span; W.span = null;
+    if (!sp || !(sp.to > sp.from)) return;
+    const ev = { kind: 'span', ...watchBase(), pass: sp.pass, from: Math.floor(sp.from), to: Math.floor(sp.to),
+      max_speed: sp.max === E.SPEEDS.length - 1 ? 'max' : E.SPEEDS[sp.max], wall_from: sp.wall, wall_to: new Date().toISOString() };
+    W.pending.push(ev); W.spans.push(ev);
+  }
+  function flushWatch(beacon) {
+    W.lastFlush = performance.now();
+    if (!W.pending.length) return;
+    const events = W.pending.splice(0);
+    if (beacon && navigator.sendBeacon) {
+      navigator.sendBeacon('/api/watch', new Blob([JSON.stringify({ events })], { type: 'application/json' }));
+      return;
+    }
+    postJson('/api/watch', { events }).catch((e) => {
+      W.pending.unshift(...events);
+      toast(`Watch log not saved (${e.message}); will retry`, 'err');
+    });
+  }
+  function watchTick() {
+    if (!W.ready) return;
+    const prev = W.lastClock, now = S.clock, jumped = W.jumped, rule = W.jumpRule;
+    W.lastClock = now; W.jumped = false; W.jumpRule = null;
+    if (prev == null) return;
+    if (now < prev || (jumped && now > prev)) {                 // discontinuity -> new pass
+      if (W.span) { W.span.to = prev; closeSpan(); }
+      W.pending.push({ kind: 'jump', ...watchBase(), from: Math.floor(prev), to: Math.floor(now), back: now < prev, mode: S.mode, ...(rule || {}) });
+      newPass(); openSpan();
+      return;
+    }
+    if (W.span && now > W.span.to) { W.span.to = now; W.span.max = Math.max(W.span.max, S.speedIdx); }
+    if (performance.now() - W.lastFlush > 15000) {
+      if (W.span && W.span.to > W.span.from) { closeSpan(); openSpan(); }  // same pass, next piece
+      flushWatch(false);
+    }
+  }
+  function watchEnd(beacon) {                                    // leaving the session (load / unload)
+    if (!W.ready) return;
+    if (W.span) { W.span.to = S.clock; closeSpan(); }
+    flushWatch(beacon);
+    W.ready = false;
+  }
+  async function watchStart() {                                  // after a session is loaded
+    W.loadId = Math.random().toString(36).slice(2, 10); W.passN = 0; W.pending = [];
+    W.lastClock = S.clock; W.jumped = false;
+    let prior = [];
+    try { prior = (await getJson(`/api/watch?date=${S.meta.session_date}&root=${S.meta.root}`)).events; }
+    catch (e) { toast(`Watch log unavailable: ${e.message}`, 'err'); }
+    W.spans = prior.filter((e) => e.kind === 'span');
+    W.skips = prior.filter((e) => e.kind === 'skip');
+    W.reviewed = prior.some((e) => e.kind === 'review');
+    W.ready = true;
+    newPass();
+    W.pending.push({ kind: 'load', ...watchBase(), at: Math.floor(S.clock), mode: S.mode,
+      prior_spans: W.spans.length, wall: new Date().toISOString() });
+    if (S.mode === 'review') {                         // switched (e.g. deep link) before we were ready
+      W.reviewed = true;
+      W.pending.push({ kind: 'review', ...watchBase(), at: Math.floor(S.clock), wall: new Date().toISOString() });
+    }
+    openSpan();
+    W.lastClock = S.clock;
+    flushWatch(false);
+    S.tradesVer++; renderJournal(true);
+  }
+  function watchMode(mode) {                                     // called by setMode on a real change
+    if (!W.ready) return;
+    if (mode === 'review') {
+      if (W.span) { W.span.to = S.clock; closeSpan(); }
+      W.reviewed = true;
+      W.pending.push({ kind: 'review', ...watchBase(), at: Math.floor(S.clock), wall: new Date().toISOString() });
+      flushWatch(false);
+    } else { newPass(); openSpan(); }
+  }
+  window.addEventListener('pagehide', () => watchEnd(true));
+  document.addEventListener('visibilitychange', () => {
+    if (!W.ready) return;
+    if (document.visibilityState === 'hidden') { if (W.span) { W.span.to = S.clock; closeSpan(); } flushWatch(true); }
+    else openSpan();
+  });
   const speedLabel = () => (S.speedIdx === E.SPEEDS.length - 1 ? 'Max' : `${speed()}×`);
   const f2 = (x) => (x == null || Number.isNaN(x) ? '—' : Number(x).toFixed(2));
   const money = (x) => (x == null ? '—' : `${x >= 0 ? '+' : '−'}$${Math.abs(x).toFixed(2)}`);
@@ -160,20 +273,28 @@
   }
 
   // Entry→exit connectors: dashed line between the underlying prices at entry and exit, with the
-  // trade's P&L in a tag at the exit end. A live (open) segment is dotted.
+  // trade's P&L in a tag at the exit end. A live (open) segment is dotted. Also draws the markers'
+  // text (markers are set without text): lightweight-charts sizes marker text from the chart-wide
+  // font, so smaller trade labels would shrink the axes too.
+  const TRADE_FONT = 6;                 // px — half the library's 12
   class ConnectorPrimitive {
     constructor() {
-      this.segs = [];
+      this.segs = []; this.labels = [];
       this._view = { zOrder: () => 'top', renderer: () => ({ draw: (target) => this._draw(target) }) };
     }
     attached(p) { this._series = p.series; this._chart = p.chart; this._request = p.requestUpdate; }
     detached() { this._series = null; this._chart = null; this._request = null; }
     updateAllViews() {}
     paneViews() { return [this._view]; }
-    set(segs) { this.segs = segs || []; if (this._request) this._request(); }
+    set(segs, labels) {
+      this.segs = segs || [];
+      if (labels) this.labels = labels;
+      if (this._request) this._request();
+    }
     _draw(target) {
       const s = this._series, ch = this._chart;
-      if (!s || !ch || !this.segs.length) return;
+      if (!s || !ch || (!this.segs.length && !this.labels.length)) return;
+      this._drawLabels(target);
       const ts = ch.timeScale();
       target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
         for (const g of this.segs) {
@@ -188,16 +309,46 @@
           ctx.fillStyle = g.color;
           for (const [x, y] of [[x0, y0], [x1, y1]]) { ctx.beginPath(); ctx.arc(x * hr, y * vr, 3 * hr, 0, 2 * Math.PI); ctx.fill(); }
           if (g.text) {
-            ctx.font = `bold ${11 * vr}px ui-monospace, Consolas, monospace`;
-            const w = ctx.measureText(g.text).width + 8 * hr, h = 16 * vr;
-            const bx = x1 * hr + 6 * hr, by = y1 * vr - h / 2;
+            ctx.font = `bold ${(TRADE_FONT - 0.5) * vr}px ui-monospace, Consolas, monospace`;
+            const w = ctx.measureText(g.text).width + 4 * hr, h = 8 * vr;
+            const bx = x1 * hr + 4 * hr, by = y1 * vr - h / 2;
             ctx.fillStyle = g.color; ctx.globalAlpha = 0.9;
             ctx.fillRect(bx, by, w, h);
             ctx.globalAlpha = 1; ctx.fillStyle = '#0f1115';
-            ctx.textBaseline = 'middle'; ctx.fillText(g.text, bx + 4 * hr, by + h / 2);
+            ctx.textBaseline = 'middle'; ctx.fillText(g.text, bx + 2 * hr, by + h / 2);
           }
           ctx.restore();
         }
+      });
+    }
+    // Marker text under belowBar arrows / over aboveBar ones, stacked like the library stacks
+    // several markers on one bar. Anchored on that bar's low / high (candles) or value (lines).
+    _drawLabels(target) {
+      const s = this._series, ts = this._chart.timeScale();
+      if (!this.labels.length) return;
+      const size = Math.min(Math.max(ts.options().barSpacing, 12), 30);   // library's arrow size
+      const stack = new Map();
+      target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
+        ctx.save();
+        ctx.font = `${TRADE_FONT * vr}px ui-monospace, Consolas, monospace`;
+        ctx.textAlign = 'center';
+        for (const lb of this.labels) {
+          const x = ts.timeToCoordinate(lb.time);
+          if (x == null) continue;
+          const d = s.dataByIndex(Math.round(ts.coordinateToLogical(x)));
+          if (!d) continue;
+          const below = lb.position === 'belowBar';
+          const price = d.low != null ? (below ? d.low : d.high) : d.value;
+          const y0 = price == null ? null : s.priceToCoordinate(price);
+          if (y0 == null) continue;
+          const sk = `${lb.time}|${below}`, n = stack.get(sk) || 0;
+          stack.set(sk, n + 1);
+          const y = below ? y0 + (n + 1) * (size + 2) + 1 : y0 - (n + 1) * (size + 2) - 1;
+          ctx.fillStyle = lb.color;
+          ctx.textBaseline = below ? 'top' : 'bottom';
+          ctx.fillText(lb.text, x * hr, y * vr);
+        }
+        ctx.restore();
       });
     }
   }
@@ -277,6 +428,7 @@
       this.chart = null; this.layers = []; this.profile = null; this.hrows = []; this.lock = null;
       this.hover = false; this.markerKey = '';
       this.R = { clock: null, k: -1, mode: '', sel: '', full: true, fresh: true };
+      this.w = 0;                          // window start: rows [0, w) of history+today are not in the series
       this.following = true; this.dragging = false; this.axisPress = false;
       this.bindAxisZoom();
       this.bindPan();
@@ -353,7 +505,7 @@
       const keepRange = this.chart && !this.R.fresh ? this.chart.timeScale().getVisibleLogicalRange() : null;
       this.destroy();
       this.R.full = true; this.R.fresh = !keepRange; this.markerKey = '';
-      this.keepRange = keepRange;
+      this.keepRange = keepRange; this.keepW = keepRange ? this.w : null; this.w = 0;
       if (this.kind === 'none' || !S.data) return;
       const m = S.meta, I = E.INTERVALS[this.iv];
       const srcT = this.kind === 'chart' ? S.data.chart.t : S.data.underlying.t;
@@ -375,6 +527,9 @@
         syncing = true;
         try { other.chart.timeScale().setVisibleRange(r); } catch (e) { /* range outside other's data */ }
         syncing = false;
+      });
+      this.chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
+        if (r && this.w > 0 && r.from < 20 && !this.growing) { this.growing = true; this.R.full = true; }
       });
       this.chart.subscribeCrosshairMove((p) => this.onCrosshair(p));
       if (this.kind === 'chart') this.buildChart();
@@ -428,9 +583,11 @@
           full: (j) => val(vw[j]), partial: () => val(asOf(ind.vwap)), hist: (r) => val(r.vwap), key: 'vwap' });
       }
       if (IND.bands) {
-        for (const k of BANDS) {
+        const zk = S.zone.k, ks = BANDS.includes(zk) ? BANDS : [zk, ...BANDS];
+        for (const k of ks) {
           for (const sign of [1, -1]) {
-            const s = this.chart.addLineSeries(lineOpts(k === 2 ? COLORS.band2 : COLORS.band));
+            const s = this.chart.addLineSeries(lineOpts(k === 2 ? COLORS.band2 : COLORS.band,
+              k === zk && !BANDS.includes(zk) ? { lineStyle: LC.LineStyle.Dashed } : undefined));
             this.layers.push({
               series: s, overlay: true,
               full: (j) => (vw[j] == null ? null : { value: vw[j] + sign * k * sd[j] }),
@@ -601,7 +758,8 @@
       this.applyZoomProviders();
       this.autoBtn.classList.toggle('hidden', !r);
     }
-    lastIndex() { return this.hrows.length + Math.max(0, E.bucketOf(this.b, S.clock)); }
+    off() { return this.hrows.length - this.w; }           // logical index of today's bar 0
+    lastIndex() { return this.off() + Math.max(0, E.bucketOf(this.b, S.clock)); }
     checkFollow() {
       if (!this.chart) return;
       const r = this.chart.timeScale().getVisibleLogicalRange(), last = this.lastIndex();
@@ -720,7 +878,7 @@
       const sets = tradeSets();
       const revealed = reveal ? -1 : sets.reduce((a, s) => a + s.trades.filter((t) => t.entry_t != null && t.entry_t <= S.clock).length
         + s.trades.filter((t) => t.exit_t != null && t.exit_t <= S.clock).length, 0);
-      const key = `${S.mode}|${revealed}|${S.tradesVer}|${reveal ? k : ''}|${S.pos ? S.pos.entry_t + ':' + S.pos.fills.length : ''}`;
+      const key = `${S.mode}|${this.w}|${revealed}|${W.skips.filter((x) => reveal || x.t <= S.clock).length}|${S.tradesVer}|${reveal ? k : ''}|${S.pos ? S.pos.entry_t + ':' + S.pos.fills.length : ''}`;
       const m = S.meta, I = E.INTERVALS[this.iv];
       const timeOf = (ms) => E.chartTime(m.session_date, m.open_ms + Math.max(0, Math.min(this.b.n - 1, Math.floor((ms - m.open_ms) / I))) * I);
       const priceAt = this.kind === 'chart'
@@ -738,7 +896,6 @@
       this.markerKey = key;
       this.segs = [];
       for (const s of sets) this.segs = this.segs.concat(E.tradeConnectors(s.trades, S.clock, reveal, timeOf, priceAt, MARKER_STYLE[s.kind]));
-      if (this.conn) this.conn.set(live ? this.segs.concat([live]) : this.segs);
       let marks = [];
       for (const s of sets) marks = marks.concat(E.tradeMarkers(s.trades, S.clock, reveal, timeOf, MARKER_STYLE[s.kind]));
       if (S.pos) {
@@ -748,16 +905,26 @@
             text: i ? `+${f.qty} @${f.mid.toFixed(2)}` : `${S.pos.type}${S.pos.strike} ×${f.qty} @${f.mid.toFixed(2)}` });
         });
       }
+      if (S.show.practice) {
+        for (const sk of W.skips) {
+          if (reveal || sk.t <= S.clock) marks.push({ time: timeOf(sk.t), position: 'aboveBar', shape: 'circle', color: '#8b949e', text: 'skip' });
+        }
+      }
       if (reveal) marks.push({ time: this.times[k], position: 'aboveBar', color: '#d29922', shape: 'circle', text: 'now' });
-      marks.sort((a, b) => a.time - b.time);
-      this.main.setMarkers(marks);
+      // a marker before the window's first bar would be pinned to that bar by the library
+      const first = this.w > this.hrows.length ? this.times[this.w - this.hrows.length] : -Infinity;
+      marks = marks.filter((mk) => mk.time >= first).sort((a, b) => a.time - b.time);
+      // text is drawn small by the connector primitive (TRADE_FONT); the library draws the shapes
+      const labels = marks.filter((mk) => mk.text).map(({ time, position, color, text }) => ({ time, position, color, text }));
+      if (this.conn) this.conn.set(live ? this.segs.concat([live]) : this.segs, labels);
+      this.main.setMarkers(this.conn ? marks.map((mk) => ({ ...mk, text: '' })) : marks);
     }
 
     // First view after a (re)build, anchored on the clock's bar k. No history -> that bar
     // mid-pane (at the open: the first bar centred); with history -> today's open near the left
     // edge so the day plays out rightward, unless the clock's bar would be off-screen.
     initialView(k) {
-      const ts = this.chart.timeScale(), H = this.hrows.length, last = H + Math.max(0, k);
+      const ts = this.chart.timeScale(), H = this.off(), last = H + Math.max(0, k);
       const n = Math.max(20, Math.floor(ts.width() / (E.INTERVALS[this.iv] === 1000 ? 3 : 6)));
       if (S.mode === 'review') {
         const total = H + this.times.length;
@@ -787,27 +954,45 @@
       const R = this.R, k = E.bucketOf(this.b, S.clock);
       const sel = this.kind === 'options' ? S.sel.key : '';
       if (sel !== R.sel && this.kind === 'options') this.setOptionLayers();
-      const rebuild = R.full || R.mode !== S.mode || R.sel !== sel || (S.mode === 'blind' && k < R.k);
+      const H = this.hrows.length, rows = H + Math.max(0, k) + 1;
+      // Sliding window (see WIN_ROWS): trim while following the newest bar, grow when scrolled left.
+      let w = this.w;
+      if (S.mode === 'review') w = 0;
+      else if (this.growing) w = Math.max(0, w - WIN_GROW);
+      else if ((R.full || (this.following && !this.dragging)) && rows - w > WIN_ROWS + WIN_SLACK) w = rows - WIN_ROWS;
+      if (R.full && this.keepW != null && S.mode !== 'review') { w = Math.min(this.keepW, w); }
+      w = Math.min(w, Math.max(0, rows - WIN_ROWS));            // jumped back: keep WIN_ROWS ending at k
+      this.keepW = null; this.growing = false;
+      const shift = w - this.w;                                 // logical indexes move left by this
+      const rebuild = R.full || shift !== 0 || R.mode !== S.mode || R.sel !== sel || (S.mode === 'blind' && k < R.k);
       if (rebuild || R.clock !== S.clock) {
-        const T = this.times, H = this.hrows.length;
+        const T = this.times;
         const item = (j, x) => withTime(T[j], x);
         const ts = this.chart.timeScale();
-        const prevRange = R.fresh ? null : (this.keepRange || ts.getVisibleLogicalRange());
+        let prevRange = R.fresh ? null : (this.keepRange || ts.getVisibleLogicalRange());
+        if (prevRange && shift) prevRange = { from: prevRange.from - shift, to: prevRange.to - shift };
         this.keepRange = null;
+        this.w = w;
+        const off = H - w;
 
         if (S.mode === 'review') {
           if (rebuild) for (const L of this.layers) L.series.setData(L.histData.concat(T.map((_, j) => item(j, L.full(j)))));
         } else if (rebuild) {
           for (const L of this.layers) {
-            const out = new Array(k + 1);
-            for (let j = 0; j < k; j++) out[j] = item(j, L.full(j));
-            out[k] = item(k, L.partial(k));
-            L.series.setData(L.histData.concat(out));
+            const j0 = Math.max(0, -off), out = new Array(k + 1 - j0);
+            for (let j = j0; j < k; j++) out[j - j0] = item(j, L.full(j));
+            out[k - j0] = item(k, L.partial(k));
+            L.series.setData((w < H ? L.histData.slice(w) : []).concat(out));
+            L.last = null;
           }
         } else {
           for (const L of this.layers) {
-            for (let j = R.k; j < k; j++) L.series.update(item(j, L.full(j)));   // finalize passed bars
-            L.series.update(item(k, L.partial(k)));
+            for (let j = R.k; j < k; j++) { L.series.update(item(j, L.full(j))); L.last = null; }   // finalize passed bars
+            // An unchanged forming bar is not re-sent: every update makes the library re-walk the series.
+            const x = L.partial(k), key = x ? JSON.stringify(x) : '';
+            if (L.last && L.last.k === k && L.last.key === key) continue;
+            L.series.update(item(k, x));
+            L.last = { k, key };
           }
         }
         if (rebuild && (R.fresh || R.mode !== S.mode)) {
@@ -817,10 +1002,10 @@
         }
         else if (S.mode === 'blind') {
           if (rebuild && prevRange) ts.setVisibleLogicalRange(prevRange);   // setData shifts the view
-          this.follow(prevRange, rebuild ? H + k : H + R.k, H + k);
-          if (rebuild && prevRange && (H + k < prevRange.from || H + k > prevRange.to)) {
+          this.follow(prevRange, rebuild ? off + k : off + R.k, off + k);
+          if (rebuild && !shift && prevRange && (off + k < prevRange.from || off + k > prevRange.to)) {
             const w = prevRange.to - prevRange.from;
-            ts.setVisibleLogicalRange({ from: H + k - 0.8 * w, to: H + k + 0.2 * w });
+            ts.setVisibleLogicalRange({ from: off + k - 0.8 * w, to: off + k + 0.2 * w });
             this.following = true;
           }
           if (rebuild) this.liveBtn.classList.toggle('hidden', this.following);
@@ -964,7 +1149,9 @@
     const c = S.data.contracts[osi], t = Math.floor(S.clock);   // clock is fractional mid-playback
     const fill = { t, mid: q.mid, qty: S.qty, exact: false };
     if (adding) S.pos.fills.push(fill);
-    else S.pos = { osi, type, strike: c.strike, offset: S.offset, fills: [fill] };
+    else S.pos = { osi, type, strike: c.strike, offset: S.offset, fills: [fill], note: '' };
+    if (E.seenBefore(W.spans, W.pass, t)) S.pos.afterRewind = true;
+    if (W.reviewed) S.pos.afterReview = true;
     const pos = S.pos;
     syncPos(pos);
     S.tradesVer++;
@@ -998,6 +1185,9 @@
       type: pos.type, qty: pos.qty, entry_t: pos.entry_t, entry_mid: pos.entry_mid, exit_t: t, exit_bid: q.bid,
       offset: pos.offset, mfe: Math.round(exc.mfe * 100) / 100, mae: Math.round(exc.mae * 100) / 100,
       fills: pos.fills.map((f) => ({ t: f.t, mid: f.mid, qty: f.qty })),
+      note: pos.note || '', blind_date: !!S.blindDate,
+      after_rewind: pos.fills.some((f) => E.seenBefore(W.spans, W.pass, f.t)) || !!pos.afterRewind,
+      after_review: W.reviewed || !!pos.afterReview,
     };
     S.pos = null;
     try {
@@ -1013,6 +1203,80 @@
     renderJournal();
   }
 
+  // SKIP: "I saw a setup here and passed". Pauses, asks for an optional reason (Enter saves,
+  // Esc cancels the skip), and logs it at the press-time clock.
+  function skipSetup() {
+    if (!S.data || !W.ready) return;
+    if (S.mode !== 'blind') return toast('Skips are logged in BLIND only', 'err');
+    const t = Math.floor(S.clock), wasPlaying = S.playing;
+    S.playing = false;
+    const spot = E.valueAsOf(S.data.underlying.t, S.data.underlying.p, t);
+    const chartPx = S.data.chart ? E.valueAsOf(S.data.chart.t, S.data.chart.c, t) : null;
+    openNote(`Skip at ${E.fmtClock(t)} — why pass? (optional)`, '', async (note) => {
+      const ev = { kind: 'skip', ...watchBase(), t, note, pass: W.pass, offset: S.offset,
+        underlying: spot, chart: chartPx, wall: new Date().toISOString() };
+      try {
+        const [saved] = (await postJson('/api/watch', { events: [ev] })).events;
+        W.skips.push(saved);
+        toast(`SKIP logged at ${E.fmtClock(t)}`, 'ok');
+      } catch (e) { toast(`Skip NOT saved: ${e.message}`, 'err'); }
+      S.tradesVer++; renderJournal(true);
+    }, () => { if (wasPlaying) S.playing = true; });
+  }
+
+  let noteCb = null;
+  function openNote(title, text, onSave, onClose) {
+    $('noteTitle').textContent = title;
+    $('noteText').value = text || '';
+    noteCb = { onSave, onClose };
+    $('noteDlg').classList.remove('hidden');
+    $('noteText').focus();
+  }
+  function closeNote(save) {
+    if (!noteCb) return;
+    const cb = noteCb, text = $('noteText').value.trim();
+    noteCb = null;
+    $('noteDlg').classList.add('hidden');
+    $('noteText').blur();
+    if (save) cb.onSave(text);
+    if (cb.onClose) cb.onClose();
+  }
+  $('noteText').addEventListener('keydown', (ev) => {
+    ev.stopPropagation();                                  // no hotkeys while typing a note
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); closeNote(true); }
+    else if (ev.key === 'Escape') { ev.preventDefault(); closeNote(false); }
+  });
+  $('noteSave').onclick = () => closeNote(true);
+  $('noteCancel').onclick = () => closeNote(false);
+  $('noteDlg').onclick = (ev) => { if (ev.target === $('noteDlg')) closeNote(false); };
+
+  async function editNote(kind, id) {
+    if (kind === 'open') {
+      if (!S.pos) return;
+      return openNote(`Note — open ${S.pos.type} ${S.pos.strike}`, S.pos.note, (note) => { if (S.pos) S.pos.note = note; S.tradesVer++; });
+    }
+    if (kind === 'skip') {
+      const sk = W.skips.find((x) => x.id === id);
+      if (!sk) return;
+      return openNote(`Note — skip at ${E.fmtClock(sk.t)}`, sk.note, async (note) => {
+        try { Object.assign(sk, await getJson(`/api/watch?id=${encodeURIComponent(id)}`, patchOpts(note))); }
+        catch (e) { toast(`Note not saved: ${e.message}`, 'err'); }
+        S.tradesVer++; renderJournal(true);
+      });
+    }
+    const tr = S.journal.find((x) => x.id === id);
+    if (!tr) return;
+    openNote(`Note — ${tr.type} ${tr.strike} · ${E.fmtClock(tr.entry_t)} → ${E.fmtClock(tr.exit_t)} · ${money(tr.pnl)}`, tr.note, async (note) => {
+      if (tr.unsaved) tr.note = note;
+      else {
+        try { Object.assign(tr, await getJson(`/api/journal?id=${encodeURIComponent(id)}`, patchOpts(note))); }
+        catch (e) { toast(`Note not saved: ${e.message}`, 'err'); }
+      }
+      S.tradesVer++; renderJournal(true);
+    });
+  }
+  const patchOpts = (note) => ({ method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) });
+
   function setQty(n) { S.qty = Math.max(1, Math.min(100, n)); savePrefs(); }
   function setOffset(o) {
     const w = S.meta ? S.meta.strike_window : 15;
@@ -1025,7 +1289,7 @@
     const sets = [];
     if (S.show.practice) sets.push({ kind: 'practice', trades: S.journal.map((t) => ({ ...t, entry_price: t.entry_mid, exit_price: t.exit_bid, label: label(t) })) });
     if (S.show.broker && !S.blindDate) sets.push({ kind: 'broker', trades: S.broker.map((t) => ({ ...t, label: label(t) })) });
-    if (S.show.upload) sets.push({ kind: 'upload', trades: S.uploads.map((t) => ({ ...t, label: label(t) })) });
+    if (S.show.upload && !S.blindDate) sets.push({ kind: 'upload', trades: S.uploads.map((t) => ({ ...t, label: label(t) })) });
     return sets;
   }
   const visibleInBlind = (t) => S.mode === 'review' || t.entry_t == null || t.entry_t <= S.clock;
@@ -1033,41 +1297,60 @@
   let lastJournalKey = '';
   function renderJournal(force) {
     const tab = S.jtab;
-    const list = tab === 'practice' ? S.journal : tab === 'broker' ? (S.blindDate ? [] : S.broker) : S.uploads;
+    const list = tab === 'practice' ? S.journal : S.blindDate ? [] : tab === 'broker' ? S.broker : S.uploads;
     const shown = tab === 'practice' ? list : list.filter(visibleInBlind);
-    const key = `${tab}|${S.tradesVer}|${shown.length}|${S.mode}|${S.show[tab]}|${S.pos ? 1 : 0}|${S.blindDate}`;
+    const key = `${tab}|${S.tradesVer}|${shown.length}|${W.skips.filter((x) => x.t <= S.clock).length}|${S.mode}|${S.show[tab]}|${S.pos ? 1 : 0}|${S.blindDate}`;
     if (!force && key === lastJournalKey) return;
     lastJournalKey = key;
     for (const b of document.querySelectorAll('.jtabs button')) b.classList.toggle('active', b.dataset.tab === tab);
     $('jShow').checked = S.show[tab];
     $('jExport').classList.toggle('hidden', tab !== 'practice');
+    $('jExportAll').classList.toggle('hidden', tab !== 'practice');
     $('jReset').classList.toggle('hidden', tab !== 'practice');
+    $('jClear').classList.toggle('hidden', tab !== 'upload' || !S.uploadFiles.length);
 
     const closed = shown.filter((t) => t.pnl != null);
     const net = closed.reduce((a, t) => a + t.pnl, 0), wins = closed.filter((t) => t.pnl > 0).length;
     $('jSum').innerHTML = `<span>${closed.length} trade${closed.length === 1 ? '' : 's'}</span>` +
       `<span>win ${closed.length ? Math.round((100 * wins) / closed.length) : 0}%</span>` +
-      `<span class="${sgnCls(net)}"><b>${money(net)}</b></span>`;
+      `<span class="${sgnCls(net)}"><b>${money(net)}</b></span>` +
+      ((n) => (tab === 'practice' && n ? `<span class="muted">${n} skip${n === 1 ? '' : 's'}</span>` : ''))(
+        W.skips.filter((x) => S.mode === 'review' || x.t <= S.clock).length);
 
     const rows = [];
-    if (tab === 'practice' && S.pos) {
-      rows.push(`<div class="jrow" data-t="${S.pos.entry_t}"><span class="c">OPEN ${S.pos.type} ${S.pos.strike} ×${S.pos.qty}</span>` +
-        `<span class="p muted">live</span><span class="t">${E.fmtClock(S.pos.entry_t)} →</span><span class="px">${S.pos.entry_mid.toFixed(2)}</span></div>`);
+    const practice = tab === 'practice';
+    const noteLine = (n) => (n ? `<span class="note">${esc(n)}</span>` : '');
+    const go = (t) => (t != null ? `<button class="go" data-go="${t}" title="Jump the clock here (going back is logged as a rewind)">⏱</button>` : '');
+    if (practice && S.pos) {
+      rows.push(`<div class="jrow" data-kind="open" title="Click to add a note"><span class="c">OPEN ${S.pos.type} ${S.pos.strike} ×${S.pos.qty}</span>` +
+        `<span class="p muted">live</span><span class="t">${E.fmtClock(S.pos.entry_t)} →</span><span class="px">${S.pos.entry_mid.toFixed(2)}</span>${noteLine(S.pos.note)}</div>`);
     }
-    for (const t of shown.slice().sort((a, b) => (b.entry_t ?? 0) - (a.entry_t ?? 0))) {
+    const skips = practice ? W.skips.filter((x) => S.mode === 'review' || x.t <= S.clock) : [];
+    const items = shown.map((t) => ({ t: t.entry_t ?? 0, tr: t })).concat(skips.map((x) => ({ t: x.t, sk: x })));
+    for (const { tr: t, sk } of items.sort((a, b) => b.t - a.t)) {
+      if (sk) {
+        rows.push(`<div class="jrow skip" data-kind="skip" data-id="${sk.id}" title="Click to edit the note">` +
+          `<span class="c">SKIP</span><span class="p muted">${go(sk.t)}</span><span class="t">${E.fmtClock(sk.t)}</span><span class="px"></span>${noteLine(sk.note)}</div>`);
+        continue;
+      }
       const ep = t.entry_price ?? t.entry_mid, xp = t.exit_price ?? t.exit_bid;
-      const name = tab === 'practice' ? `${t.type} ${t.strike} ×${t.qty}` : `${t.root || t.symbol} ${t.type || ''} ${t.strike ?? ''} ×${t.qty}`;
-      const del = tab === 'practice' ? `<button class="del" data-del="${t.id}" title="Delete from journal">✕</button>` : '';
-      rows.push(`<div class="jrow" data-t="${t.entry_t ?? ''}"><span class="c">${name}${t.unsaved ? ' <span class="neg">(unsaved)</span>' : ''}</span>` +
-        `<span class="p ${sgnCls(t.pnl)}">${money(t.pnl)} ${del}</span>` +
+      const name = practice ? `${t.type} ${t.strike} ×${t.qty}` : `${t.root || t.symbol} ${t.type || ''} ${t.strike ?? ''} ×${t.qty}`;
+      const del = practice ? `<button class="del" data-del="${t.id}" title="Delete from journal">✕</button>` : '';
+      const flags = (t.after_rewind ? ' <span class="flag" title="Entered on time already watched (after a rewind)">↺</span>' : '')
+        + (t.after_review ? ' <span class="flag" title="REVIEW was opened on this session before this trade">R</span>' : '');
+      rows.push(`<div class="jrow"${practice ? ` data-kind="trade" data-id="${t.id}" title="Click to add / edit a note"` : ` data-t="${t.entry_t ?? ''}"`}>` +
+        `<span class="c">${name}${flags}${t.unsaved ? ' <span class="neg">(unsaved)</span>' : ''}</span>` +
+        `<span class="p ${sgnCls(t.pnl)}">${money(t.pnl)} ${practice ? go(t.entry_t) : ''}${del}</span>` +
         `<span class="t">${t.entry_t != null ? E.fmtClock(t.entry_t) : t.entry_ts ? t.entry_ts.slice(0, 10) : '—'} → ${t.exit_t != null ? E.fmtClock(t.exit_t) : t.exit_ts ? t.exit_ts.slice(0, 10) : 'open'}</span>` +
-        `<span class="px">${f2(ep)} → ${f2(xp)}</span></div>`);
+        `<span class="px">${f2(ep)} → ${f2(xp)}</span>${practice ? noteLine(t.note) : ''}</div>`);
     }
     $('jList').innerHTML = rows.join('') || '<div class="jfoot muted">No trades.</div>';
     const hidden = list.length - shown.length;
-    $('jFoot').textContent = (hidden > 0 ? `${hidden} later trade${hidden === 1 ? '' : 's'} hidden until the clock reaches them (BLIND). ` : '')
+    $('jFoot').textContent = (hidden > 0 ? `${hidden} later trade${hidden === 1 ? '' : 's'} hidden until the clock reaches them (BLIND) — press v for REVIEW to see all. ` : '')
       + (tab === 'broker' ? (S.blindDate ? 'Hidden during random-blind practice — Reveal to show.' : (S.brokerNote || 'From order_history.json (read-only).')) : '')
-      + (tab === 'upload' ? 'Drop or upload an order_history-style JSON or a practice export.' : '');
+      + (tab === 'upload' ? (S.blindDate ? 'Hidden during random-blind practice — Reveal to show.'
+        : S.uploadFiles.length ? `Files (kept across days): ${S.uploadFiles.map((f) => f.name).join(', ')}.`
+          : 'Drop or upload an order_history-style JSON or a practice export.') : '');
   }
 
   $('jList').onclick = async (ev) => {
@@ -1082,8 +1365,26 @@
       } catch (e) { toast(`Delete failed: ${e.message}`, 'err'); }
       return;
     }
+    const go = ev.target.closest('[data-go]');
+    if (go) { ev.stopPropagation(); seek(+go.dataset.go); return; }
     const row = ev.target.closest('.jrow');
-    if (row && row.dataset.t) seek(+row.dataset.t);
+    if (!row) return;
+    if (row.dataset.kind) return editNote(row.dataset.kind, row.dataset.id);   // practice: notes
+    if (row.dataset.t) seek(+row.dataset.t);                                   // overlays: jump
+  };
+  $('jExportAll').onclick = async (ev) => {
+    ev.target.blur();
+    try {
+      flushWatch(false);
+      const all = await getJson('/api/export');
+      const blob = new Blob([JSON.stringify(all, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `practice_all_${all.journal_file.replace(/\.jsonl$/, '')}_${all.exported_at.slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      toast(`Exported ${all.trades.length} trades + ${all.watch.length} watch-log events`, 'ok');
+    } catch (e) { toast(`Export failed: ${e.message}`, 'err'); }
   };
   for (const b of document.querySelectorAll('.jtabs button')) {
     b.onclick = () => { S.jtab = b.dataset.tab; savePrefs(); renderJournal(true); };
@@ -1113,16 +1414,38 @@
   $('jUpload').onclick = () => $('jFile').click();
   $('jFile').onchange = (ev) => { if (ev.target.files[0]) uploadFile(ev.target.files[0]); ev.target.value = ''; };
 
+  const parseUpload = (f, date) =>
+    postJson(`/api/parse-trades?date=${date}&name=${encodeURIComponent(f.name)}`, f.obj).then((r) => r.trades);
   async function uploadFile(file) {
     if (!S.meta) return toast('Load a session first', 'err');
     try {
-      const obj = JSON.parse(await file.text());
-      const r = await postJson(`/api/parse-trades?date=${S.meta.session_date}&name=${encodeURIComponent(file.name)}`, obj);
-      S.uploads = S.uploads.filter((t) => t.source !== `upload:${file.name}`).concat(r.trades);
+      const f = { name: file.name, obj: JSON.parse(await file.text()) };
+      const trades = await parseUpload(f, S.meta.session_date);
+      S.uploadFiles = S.uploadFiles.filter((g) => g.name !== f.name).concat(f);
+      const kept = saveUploadFiles();
+      S.uploads = S.uploads.filter((t) => t.source !== `upload:${f.name}`).concat(trades);
       S.tradesVer++; S.jtab = 'upload'; renderJournal(true);
-      toast(`${file.name}: ${r.trades.length} round trip${r.trades.length === 1 ? '' : 's'} on ${S.meta.session_date}`, 'ok');
+      const days = Array.isArray(f.obj) ? new Set(f.obj.map((r) => r && r.session_date).filter(Boolean)).size : 0;
+      toast(`${f.name}: ${trades.length} round trip${trades.length === 1 ? '' : 's'} on ${S.blindDate ? 'this session' : S.meta.session_date}`
+        + (days > 1 ? ` (file covers ${days} sessions; each shows when loaded)` : '')
+        + (kept ? '' : ' — too big to remember after a reload')
+        + (S.mode === 'blind' && trades.some((t) => !visibleInBlind(t)) ? ' · BLIND hides later ones: v = REVIEW' : ''), 'ok');
     } catch (e) { toast(`Upload failed: ${e.message}`, 'err'); }
   }
+  /** Re-filter every kept upload file to the session just loaded. */
+  async function refreshUploads() {
+    const date = S.meta.session_date, ver = ++S.uploadsReq;
+    const parts = await Promise.all(S.uploadFiles.map((f) => parseUpload(f, date).catch((e) => {
+      toast(`${f.name}: ${e.message}`, 'err'); return [];
+    })));
+    if (ver !== S.uploadsReq || !S.meta || S.meta.session_date !== date) return;   // a newer load won
+    S.uploads = parts.flat(); S.tradesVer++; renderJournal(true);
+  }
+  $('jClear').onclick = (ev) => {
+    ev.target.blur();
+    S.uploadFiles = []; S.uploads = []; saveUploadFiles();
+    S.tradesVer++; renderJournal(true);
+  };
   let dragDepth = 0;
   window.addEventListener('dragenter', (ev) => { if (ev.dataTransfer.types.includes('Files')) { dragDepth++; $('drop').classList.remove('hidden'); } });
   window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('drop').classList.add('hidden'); } });
@@ -1223,6 +1546,7 @@
         S.clock = E.advanceClock(S.clock, dt, speed(), S.meta.open_ms, S.meta.close_ms);
         if (S.clock >= S.meta.close_ms) S.playing = false;
       }
+      watchTick();
       updateSelection();
       updateProfile();
       for (const p of S.panes) p.render();
@@ -1234,8 +1558,9 @@
   }
 
   const visibleIvs = () => S.panes.filter((p) => p.kind !== 'none').map((p) => E.INTERVALS[p.iv]);
-  function seek(ms) {
+  function seek(ms, continuous) {
     if (!S.data || ms == null) return;
+    if (!continuous) W.jumped = true;               // forward seeks skip unwatched time
     let t = Math.min(S.meta.close_ms, Math.max(S.meta.open_ms, ms));
     const lastFill = S.pos ? S.pos.fills[S.pos.fills.length - 1].t : null;
     if (S.pos && t < lastFill) {                     // can't rewind past an open position's last fill
@@ -1249,12 +1574,52 @@
     if (!S.data) return;
     S.playing = false;
     const iv = coarse ? Math.max(...visibleIvs()) : Math.min(...visibleIvs());
-    seek(E.stepBoundary(S.clock, iv, dir, S.meta.open_ms, S.meta.close_ms));
+    seek(E.stepBoundary(S.clock, iv, dir, S.meta.open_ms, S.meta.close_ms), dir > 0);   // stepping on = watching
+  }
+  // Fixed forward/back jumps (Ctrl+arrows). Forward = skipped time (not watched), so a new pass.
+  function jumpBy(ms) {
+    if (!S.data) return;
+    if (ms > 0) W.jumpRule = { rule: 'fixed', by_s: ms / 1000 };
+    seek(S.clock + ms, false);
+  }
+  // n = skip the dead zone: jump to whichever comes first —
+  //   1) the next 1s close beyond ±k σ of session VWAP (minus the lead, to watch the approach);
+  //   2) 2 s after an outsized 1s candle (range >= big × the largest 1s range of the prior 5 min).
+  // Causal scans (Engine.nextZoneExit / nextBigCandle) — the clock a playback paused on the event
+  // would reach; logged as a rule jump so the skipped time reads as "nothing by my rules", not
+  // inattention. Refused in a position (would skip managing it).
+  const ZONE_REARM_MS = 30000;     // back inside this long before the next breakout counts
+  function zoneSkip() {
+    if (!S.data || !S.ind) return;
+    if (S.pos) return toast('In a position — zone skip would skip managing it (close it first)', 'err');
+    const c = S.data.chart, { k, lead, big } = S.zone;
+    S.playing = false;
+    const tb = E.nextZoneExit(c.t, c.c, S.ind.vwap, S.ind.sd, S.clock, k, ZONE_REARM_MS);
+    let tc = E.nextBigCandle(c.t, c.h, c.l, S.clock, big, S.meta.open_ms);
+    if (tc != null && tc > S.meta.close_ms) tc = null;
+    const rule = { rule: 'zone', k, lead_s: lead, big };
+    if (tb == null && tc == null) {
+      W.jumpRule = { ...rule, stop: 'close' };
+      seek(S.meta.close_ms, false);
+      return toast(`Nothing beyond ±${k}σ${big > 0 ? ' or outsized' : ''} to the close`, 'ok');
+    }
+    let to = tb == null ? Infinity : tb - lead * 1000;
+    if (tb != null && to <= S.clock + 1000) to = tb;   // already within the lead: go to the move itself
+    if (tc != null && tc <= to) {                       // the candle comes first (no lead: it'd leak)
+      W.jumpRule = { ...rule, stop: 'candle' };
+      seek(tc, false);
+      return toast(`⏭ ${E.fmtClock(tc)} — outsized 1s candle (2 s ago)`, 'ok');
+    }
+    W.jumpRule = { ...rule, stop: 'sigma' };
+    seek(to, false);
+    toast(`⏭ ${E.fmtClock(to)} — ${to < tb ? `±${k}σ in ${lead}s` : `beyond ±${k}σ`}`, 'ok');
   }
   function setSpeed(i) { S.speedIdx = Math.max(0, Math.min(E.SPEEDS.length - 1, i)); savePrefs(); }
   function setMode(mode) {
     if (mode === 'review' && S.pos) return toast('Close the open position before REVIEW (it shows the future)', 'err');
+    const changed = mode !== S.mode;
     S.mode = mode;
+    if (changed) watchMode(mode);
     $('mode').textContent = mode === 'blind' ? 'BLIND' : 'REVIEW';
     $('mode').className = `mode ${mode}`;
     S.profileIdx = null;
@@ -1386,6 +1751,7 @@
     if (!date) return;
     if (S.pos && !confirm('Discard the open practice position (it is not journaled until closed)?')) return;
     S.pos = null;
+    watchEnd(false);
     savePrefs();
     S.playing = false;
     overlay(`Slicing ${root} ${S.blindDate ? '(random day)' : date} ${dte}DTE from the archive… (first load of a session takes ~5–10 s; cached after)`);
@@ -1405,6 +1771,7 @@
       S.brokerNote = br.error ? `Real trades unavailable: ${br.error}` : `${br.trades.length} real round trip${br.trades.length === 1 ? '' : 's'} on ${date} from order_history.json (read-only).`;
       S.tradesVer++;
       $('timeline').min = S.meta.open_ms; $('timeline').max = S.meta.close_ms;
+      drawRuler();
       prepare();
       S.clock = S.meta.open_ms;
       setMode('blind');
@@ -1413,6 +1780,8 @@
       showMeta();
       renderJournal(true);
       overlay(null);
+      if (S.uploadFiles.length) refreshUploads();
+      watchStart();
     } catch (e) {
       overlay(`No data: ${e.message}`);
       setTimeout(() => overlay(null), 4000);
@@ -1451,6 +1820,10 @@
 
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') { $('help').classList.add('hidden'); closeCal(); document.activeElement.blur(); return; }
+    if (!typing() && ev.ctrlKey && !ev.altKey && (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft')) {
+      ev.preventDefault();
+      return jumpBy((ev.key === 'ArrowRight' ? 1 : -1) * (ev.shiftKey ? 300000 : 30000));
+    }
     if (typing() || ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const handled = {
       ' ': togglePlay,
@@ -1459,7 +1832,7 @@
       Home: () => seek(S.meta && S.meta.open_ms), End: () => seek(S.meta && S.meta.close_ms),
       ',': () => setOffset(S.offset - 1), '.': () => setOffset(S.offset + 1),
       ';': () => setQty(S.qty - 1), "'": () => setQty(S.qty + 1),
-      c: () => openPos('C'), p: () => openPos('P'), x: () => closePos(),
+      c: () => openPos('C'), p: () => openPos('P'), x: () => closePos(), s: () => skipSetup(), n: () => zoneSkip(),
       v: () => setMode(S.mode === 'blind' ? 'review' : 'blind'),
       g: () => $('goto').focus(),
       r: () => randomSession(),
@@ -1470,6 +1843,21 @@
   });
 
   $('play').onclick = togglePlay;
+  $('zoneBtn').onclick = (ev) => { ev.currentTarget.blur(); zoneSkip(); };
+  function zoneChanged() {
+    const k = Number($('zoneK').value);
+    if (k >= 0.5 && k <= 5) S.zone.k = Math.round(k * 10) / 10;
+    S.zone.lead = Number($('zoneLead').value) || 0;
+    const big = Number($('zoneBig').value);
+    if (big >= 0 && big <= 50) S.zone.big = Math.round(big * 10) / 10;
+    $('zoneK').value = S.zone.k; $('zoneBig').value = S.zone.big;
+    for (const id of ['zoneK', 'zoneLead', 'zoneBig']) $(id).blur();
+    savePrefs();
+    for (const p of S.panes) if (p.kind === 'chart' && p.ind.bands) p.rebuild();   // dashed ±k band
+  }
+  $('zoneK').onchange = zoneChanged;
+  $('zoneLead').onchange = zoneChanged;
+  $('zoneBig').onchange = zoneChanged;
   $('stepFwd').onclick = () => step(1);
   $('stepBack').onclick = () => step(-1);
   $('toOpen').onclick = () => seek(S.meta && S.meta.open_ms);
@@ -1486,6 +1874,39 @@
   $('buyCall').onclick = (ev) => { ev.target.blur(); openPos('C'); };
   $('buyPut').onclick = (ev) => { ev.target.blur(); openPos('P'); };
   $('closePos').onclick = (ev) => { ev.target.blur(); closePos(); };
+  // Tape-measure ruler under the timeline: a tick every 5 min, longer at :15/:45, longer again at
+  // :30, tallest (with a tiny hour number) on the hour. Positions follow the range input's thumb
+  // travel (the thumb centre runs from THUMB/2 to width - THUMB/2).
+  const THUMB = 16;
+  function drawRuler() {
+    const cv = $('ruler'), w = cv.clientWidth, h = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+    if (!w || !h) return;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!S.meta) return;
+    const css = getComputedStyle(document.documentElement);
+    const lo = S.meta.open_ms, hi = S.meta.close_ms, STEP = 5 * 60000;
+    const x = (ms) => THUMB / 2 + ((ms - lo) / (hi - lo)) * (w - THUMB);
+    ctx.font = '9px ui-monospace, Consolas, monospace';
+    ctx.textBaseline = 'top';
+    for (let ms = Math.ceil(lo / STEP) * STEP; ms <= hi; ms += STEP) {
+      const min = Math.round(ms / 60000) % 60;
+      const len = min === 0 ? 9 : min === 30 ? 6 : min % 15 === 0 ? 4.5 : 2.5;
+      const px = Math.round(x(ms)) + 0.5;
+      ctx.strokeStyle = min === 0 ? css.getPropertyValue('--text') : css.getPropertyValue('--muted');
+      ctx.globalAlpha = min === 0 ? 0.8 : 0.6;
+      ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, len); ctx.stroke();
+      if (min === 0) {
+        ctx.globalAlpha = 0.7; ctx.fillStyle = css.getPropertyValue('--muted');
+        const label = String(Math.round(ms / 3600000)), tw = ctx.measureText(label).width;
+        ctx.fillText(label, px + 2 + tw > w ? px - 2 - tw : px + 2, 3);   // last hour: left of its tick
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  new ResizeObserver(drawRuler).observe($('ruler'));
   $('timeline').addEventListener('input', (ev) => seek(+ev.target.value));
   $('timeline').addEventListener('change', (ev) => ev.target.blur());
   $('goto').addEventListener('keydown', (ev) => {
@@ -1524,6 +1945,8 @@
     if (Number.isInteger(p.histDays)) S.histDays = Math.max(0, Math.min(10, p.histDays));
     if (p.layout) S.layout = { ...S.layout, ...p.layout, hudW: Math.max(260, p.layout.hudW || 330) };
     if (p.show) S.show = { ...S.show, ...p.show };
+    if (p.zone && p.zone.k > 0) S.zone = { k: +p.zone.k, lead: +p.zone.lead || 0, big: p.zone.big == null ? 3 : +p.zone.big };
+    $('zoneK').value = S.zone.k; $('zoneLead').value = String(S.zone.lead); $('zoneBig').value = S.zone.big;
     if (p.jtab) S.jtab = p.jtab;
     if (Array.isArray(p.paneInd)) p.paneInd.forEach((ind, i) => {
       if (S.panes[i] && ind) S.panes[i].ind = { ...defaultInd(), ...ind, ema: { ...defaultInd().ema, ...ind.ema }, bb: { ...defaultInd().bb, ...ind.bb } };

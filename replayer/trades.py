@@ -70,7 +70,8 @@ def quote_at(session_date: date, root: str, dte: int, osi: str, at: int) -> dict
 # ------------------------------------------------------------------ practice journal
 
 _journal_lock = threading.Lock()
-JOURNAL_FIELDS = ('session_date', 'root', 'dte', 'expiry', 'osi', 'strike', 'type', 'qty',
+NOTE_MAX = 1000
+JOURNAL_FIELDS =('session_date', 'root', 'dte', 'expiry', 'osi', 'strike', 'type', 'qty',
                   'entry_t', 'entry_mid', 'exit_t', 'exit_bid')
 
 
@@ -125,8 +126,12 @@ def journal_append(rec: dict) -> dict:
         'entry_t': math.floor(float(rec['entry_t'])), 'exit_t': math.floor(float(rec['exit_t'])),
         'pnl': round((float(rec['exit_bid']) - float(rec['entry_mid'])) * 100 * qty, 2),
         'offset': rec.get('offset'), 'mfe': rec.get('mfe'), 'mae': rec.get('mae'),
-        'note': rec.get('note', ''), 'tag': rec.get('tag', ''),
+        'note': str(rec.get('note') or '')[:NOTE_MAX], 'tag': rec.get('tag', ''),
         **({'fills': fills} if fills else {}),
+        # honesty flags (computed by the client from the watch log): a fill fell inside a stretch
+        # already watched on an earlier pass, or REVIEW was opened on this session before the trade
+        'after_rewind': bool(rec.get('after_rewind')), 'after_review': bool(rec.get('after_review')),
+        'blind_date': bool(rec.get('blind_date')),
         'created_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
     })
     path = config.JOURNAL_PATH
@@ -153,6 +158,26 @@ def journal_reset(session_date: str, root: str) -> int:
     return len(lines) - len(keep)
 
 
+def _jsonl_set_note(path, rec_id: str, note: str) -> dict:
+    """Rewrite one row's `note` in a JSONL file (atomic replace). Returns the updated row."""
+    if not path.exists():
+        raise KeyError(rec_id)
+    with _journal_lock:
+        rows = [json.loads(ln) for ln in path.read_text(encoding='utf-8').splitlines() if ln.strip()]
+        hit = next((r for r in rows if r.get('id') == rec_id), None)
+        if hit is None:
+            raise KeyError(rec_id)
+        hit['note'] = str(note or '')[:NOTE_MAX]
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(''.join(json.dumps(r) + '\n' for r in rows), encoding='utf-8')
+        tmp.replace(path)
+    return hit
+
+
+def journal_set_note(trade_id: str, note: str) -> dict:
+    return _jsonl_set_note(config.JOURNAL_PATH, trade_id, note)
+
+
 def journal_delete(trade_id: str) -> bool:
     path = config.JOURNAL_PATH
     if not path.exists():
@@ -166,6 +191,66 @@ def journal_delete(trade_id: str) -> bool:
         tmp.write_text(''.join(ln + '\n' for ln in keep), encoding='utf-8')
         tmp.replace(path)
     return True
+
+
+# ------------------------------------------------------------------ watch log
+# What the operator actually saw, so mock trades can be judged honestly: BLIND spans watched
+# (split into passes at every jump), jumps back/forward, REVIEW switches, loads, and SKIPs
+# (setups seen and passed on). Append-only, next to the journal it belongs to.
+
+WATCH_KINDS = ('load', 'span', 'jump', 'review', 'skip')
+
+
+def watch_path():
+    j = config.JOURNAL_PATH
+    return j.with_name(f'{j.stem}_watch.jsonl')
+
+
+def watch_append(events: list) -> list:
+    if not isinstance(events, list):
+        raise ValueError('events must be a list')
+    now = datetime.now(timezone.utc).isoformat(timespec='seconds')
+    clean = []
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get('kind') not in WATCH_KINDS:
+            raise ValueError(f'bad watch event {ev!r:.80}')
+        if not ev.get('session_date') or not ev.get('root'):
+            raise ValueError('watch event needs session_date and root')
+        out = {k: v for k, v in ev.items() if k != 'id'}
+        if ev['kind'] == 'span':
+            out['from'], out['to'] = math.floor(float(ev['from'])), math.floor(float(ev['to']))
+            if out['to'] < out['from']:
+                raise ValueError('span ends before it starts')
+        if ev['kind'] == 'skip':
+            out['t'] = math.floor(float(ev['t']))
+            out['note'] = str(ev.get('note') or '')[:NOTE_MAX]
+        clean.append({'id': uuid.uuid4().hex[:12], **out, 'logged_at': now})
+    path = watch_path()
+    with _journal_lock:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a', encoding='utf-8') as f:
+            f.writelines(json.dumps(e) + '\n' for e in clean)
+    return clean
+
+
+def watch_read(session_date: str = None, root: str = None) -> list:
+    path = watch_path()
+    if not path.exists():
+        return []
+    with _journal_lock:
+        rows = [json.loads(ln) for ln in path.read_text(encoding='utf-8').splitlines() if ln.strip()]
+    return [r for r in rows if (not session_date or r.get('session_date') == session_date)
+            and (not root or r.get('root') == root)]
+
+
+def watch_set_note(event_id: str, note: str) -> dict:
+    return _jsonl_set_note(watch_path(), event_id, note)
+
+
+def export_all() -> dict:
+    """Every practice trade and the whole watch log, for handing to an analysis."""
+    return {'exported_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            'journal_file': config.JOURNAL_PATH.name, 'trades': journal_read(), 'watch': watch_read()}
 
 
 # ------------------------------------------------------------------ overlays (fills -> round trips)

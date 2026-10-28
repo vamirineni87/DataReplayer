@@ -31,6 +31,8 @@ clock is ever shown.
 - **Trade overlays:** your real broker fills (read-only, from an `order_history.json`) or an
   uploaded JSON, paired into round trips and drawn on the chart.
 - **Random blind practice:** load a random session with its date hidden until you reveal it.
+- **Mock-trade evidence:** a watch log records what you actually watched (BLIND spans, rewinds,
+  REVIEW, skips); trades on already-seen time are flagged; per-trade notes; **Export all**.
 - **No look-ahead anywhere.** This is the integrity core, and it is unit-tested. See
   [docs/DESIGN.md](docs/DESIGN.md).
 
@@ -85,9 +87,12 @@ Press `?` in the UI for all keys.
 | Key | Action |
 |---|---|
 | `c` / `p` / `x` | buy call @ mid / buy put @ mid / close @ bid (BLIND only, long only, one position; the same key again adds to it, the other side is refused) |
+| `s` | skip: log "saw a setup, passed" with an optional reason |
 | `,` `.` / `;` `'` | strike offset − / + (+ = OTM) / quantity − / + |
 | `space` | play / pause |
 | `←` `→` | step one bar (Shift steps by the coarsest pane) |
+| `Ctrl+→` / `Ctrl+←` | jump 30 s (with Shift: 5 min) |
+| `n` | skip the dead zone: jump to the next move beyond ±kσ of VWAP (k = 1.5 by default), or 2 s after an outsized 1s candle (≥ 3× the largest 1s range of the prior 5 min), whichever is first; both set in the footer |
 | `[` `]` | speed down / up |
 | `Home` `End` | jump to the open / close |
 | `g` | go to a time |
@@ -95,6 +100,8 @@ Press `?` in the UI for all keys.
 | `r` | random blind session |
 | `j` | trades list |
 | `?` | help |
+
+Click a Practice trade (or a skip, or the open position) to add a note; ⏱ jumps the clock to it.
 
 Mouse: drag the chart to pan; scroll or drag the price axis to unlock price (**A** or a
 double-click re-locks it); **⟫** jumps back to the newest bar; drag the dividers to resize.

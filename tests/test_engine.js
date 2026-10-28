@@ -316,6 +316,47 @@ tests.tapeStatsUseOnlyFinishedSeconds = () => {
   assert.strictEqual(s.total, 60);                                           // the 40 at 3999 not yet visible
 };
 
+tests.seenBeforeIgnoresTheCurrentPass = () => {
+  const spans = [{ pass: 'a:1', from: 1000, to: 5000 }, { pass: 'a:2', from: 2000, to: 9000 }];
+  assert.strictEqual(E.seenBefore(spans, 'a:2', 3000), true);     // watched on pass 1, now again
+  assert.strictEqual(E.seenBefore(spans, 'a:2', 7000), false);    // only this pass has reached it
+  assert.strictEqual(E.seenBefore(spans, 'a:3', 7000), true);
+  assert.strictEqual(E.seenBefore(spans, 'a:1', 500), false);
+  assert.strictEqual(E.seenBefore([], 'a:1', 500), false);
+};
+
+tests.nextBigCandleStopsAfterItWithinTheWindow = () => {
+  // 1s bars every second from 0 (stamps second-end); ranges 0.1 except the ones set below
+  const n = 400, t = [], h = [], l = [];
+  for (let i = 0; i < n; i++) { t.push(i * 1000 + 999); l.push(100); h.push(100.1); }
+  h[350] = 100.35;                                   // 3.5x the 5-min max -> fires (stop 352.999 s)
+  h[360] = 100.25;                                   // 0.25 vs window max 0.35 -> not outsized
+  h[30] = 100.9;                                     // before a full 5-min window -> ignored
+  assert.strictEqual(E.nextBigCandle(t, h, l, 0, 3, 0), 352999);
+  assert.strictEqual(E.nextBigCandle(t, h, l, 351000, 3, 0), 352999);      // seen, stop still ahead
+  assert.strictEqual(E.nextBigCandle(t, h, l, 352999, 3, 0), null);         // pressed again at the stop
+  assert.strictEqual(E.nextBigCandle(t, h, l, 0, 4, 0), null);
+  assert.strictEqual(E.nextBigCandle(t, h, l, 0, 0, 0), null);              // off
+};
+
+tests.nextZoneExitIsCausalAndReArms = () => {
+  const t = [999, 1999, 2999, 3999, 4999, 5999];
+  const vwap = [100, 100, 100, 100, 100, 100], sd = [0, 1, 1, 1, 1, 1];
+  const close = [105, 100.5, 101.6, 101, 98.4, 100];   // z: (sd 0) 0.5 1.6 1 -1.6 0
+  assert.strictEqual(E.nextZoneExit(t, close, vwap, sd, 0, 1.5), 2999);      // sd=0 row ignored
+  assert.strictEqual(E.nextZoneExit(t, close, vwap, sd, 1999, 1.5), 2999);
+  // at 2999 already outside: must come back in (3999) before the next exit (4999, either side)
+  assert.strictEqual(E.nextZoneExit(t, close, vwap, sd, 2999, 1.5), 4999);
+  assert.strictEqual(E.nextZoneExit(t, close, vwap, sd, 3000, 1.5), 4999);   // as-of row 2999 is out
+  assert.strictEqual(E.nextZoneExit(t, close, vwap, sd, 4999, 1.5), null);
+  assert.strictEqual(E.nextZoneExit(t, close, vwap, sd, 0, 2), null);
+  // re-arm dwell: inside only 3999 (one row) before 4999 -> not re-armed with 1.5 s dwell
+  assert.strictEqual(E.nextZoneExit(t, close, vwap, sd, 2999, 1.5, 1500), null);
+  const t2 = [999, 1999, 2999, 3999, 4999], c2 = [102, 100, 100, 100, 102], one = [1, 1, 1, 1, 1];
+  assert.strictEqual(E.nextZoneExit(t2, c2, [100, 100, 100, 100, 100], one, 999, 1.5, 2000), 4999);
+  assert.strictEqual(E.nextZoneExit(t2, c2, [100, 100, 100, 100, 100], one, 999, 1.5, 3000), null);
+};
+
 let failed = 0;
 for (const [name, fn] of Object.entries(tests)) {
   try { fn(); console.log(`PASS engine.${name}`); }

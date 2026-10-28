@@ -15,6 +15,11 @@ Routes:
     GET /api/quote?date=&root=&dte=&osi=&t=     exact bid/ask/mid as of t (full tick tape)
     GET/POST/DELETE /api/journal                practice round trips (journal/trades.jsonl);
                                                 DELETE ?id= one trade, ?date=&root= reset a session
+    PATCH /api/journal?id=                      {note} edit a practice trade's note
+    GET/POST /api/watch                         watch log (<journal>_watch.jsonl): spans watched,
+                                                jumps, REVIEW, loads, skips; POST {events:[...]}
+    PATCH /api/watch?id=                        {note} edit a skip's note
+    GET /api/export                             every practice trade + the whole watch log
     GET /api/broker?date=                       real round trips from order_history.json (read-only)
     POST /api/parse-trades?date=&name=          uploaded JSON -> round trips (not stored)
 """
@@ -112,6 +117,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self._dispatch('DELETE')
 
+    def do_PATCH(self):
+        self._dispatch('PATCH')
+
     def _daily(self, q):
         root = q['root'].upper()
         if root not in config.ROOTS:
@@ -133,6 +141,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {'deleted': trades.journal_delete(q['id'])})
         date.fromisoformat(q['date'])                            # validate before deleting
         self._json(200, {'deleted': trades.journal_reset(q['date'], q['root'].upper())})
+
+    def _journal_patch(self, q):
+        self._json(200, trades.journal_set_note(q['id'], self._body_json().get('note', '')))
+
+    def _watch_get(self, q):
+        self._json(200, {'events': trades.watch_read(q.get('date'), q.get('root'))})
+
+    def _watch_post(self, q):
+        self._json(200, {'events': trades.watch_append(self._body_json().get('events'))})
+
+    def _watch_patch(self, q):
+        self._json(200, trades.watch_set_note(q['id'], self._body_json().get('note', '')))
+
+    def _export(self, q):
+        self._json(200, trades.export_all())
 
     def _broker(self, q):
         self._json(200, {'trades': trades.broker_trades(date.fromisoformat(q['date']))})
@@ -194,6 +217,11 @@ Handler.ROUTES = {
     ('GET', '/api/journal'): Handler._journal_get,
     ('POST', '/api/journal'): Handler._journal_post,
     ('DELETE', '/api/journal'): Handler._journal_delete,
+    ('PATCH', '/api/journal'): Handler._journal_patch,
+    ('GET', '/api/watch'): Handler._watch_get,
+    ('POST', '/api/watch'): Handler._watch_post,
+    ('PATCH', '/api/watch'): Handler._watch_patch,
+    ('GET', '/api/export'): Handler._export,
     ('GET', '/api/broker'): Handler._broker,
     ('POST', '/api/parse-trades'): Handler._parse_trades,
 }

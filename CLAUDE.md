@@ -172,6 +172,12 @@ Three layers, data flowing one way:
    ranges only when intervals match. Chart times are fake-UTC seconds displayed as ET wall clock.
    The date picker is a custom calendar enabling only `/api/sessions` days (data-driven, so a
    weekend-trading source would show weekends). **No forward interpolation** (SPEC §4B amended).
+   **Sliding window:** lightweight-charts 4.2 re-walks every row of a series on each repaint
+   after `update()`, so in BLIND each series holds only the newest `WIN_ROWS` rows (`pane.w` =
+   rows left out, `off()` = logical index of today's bar 0; trimmed only while following, grown
+   when scrolled to the left edge; REVIEW keeps all). Never index logically with
+   `hrows.length + k` — use `off() + k`. Unchanged forming bars aren't re-sent.
+   Uploaded files persist in localStorage (`replayer.uploads.v1`) and are re-parsed per Load.
    Indicators are **per pane** (`pane.ind`, chips in the pane header); EMA/BB carry a length
    and a SOURCE timeframe (`mtfSource` + `Engine.mtfEMA/mtfBB`): at a display instant the value
    = completed source closes before it + the price as of it (TradingView's developing HTF value),
@@ -189,10 +195,22 @@ Three layers, data flowing one way:
    Practice / Real (broker) / Uploaded; markers per source colour. `ConnectorPrimitive` draws
    entry→exit dashed lines at the underlying's prices with a P&L tag (`Engine.tradeConnectors`:
    only once the exit is reached in BLIND); an open position draws a live dotted line to now.
+   Marker TEXT is drawn by `ConnectorPrimitive._drawLabels` at `TRADE_FONT` (6px; markers are set with
+   empty text) because the library sizes marker text from the chart-wide font (would shrink the axes).
    EMA/BB source timeframes include 15m/30m/1h (`TF_MS`) and 1D. "Tape" chip = trades-per-bar
    histogram (own scale above volume); HUD "Tape (10s)" = `Engine.tapeStats` (finished seconds
    only) vs the session average. Practice "Reset" = `DELETE /api/journal?date=&root=`
    (`trades.journal_reset`, scoped to one session; also drops an open position).
+   **Watch log** (mock-trade evidence): `<journal stem>_watch.jsonl` (`trades.watch_*`,
+   `/api/watch`) records BLIND `span`s grouped into passes (new pass on any back/forward jump,
+   REVIEW, load), `jump` (`rule: zone|fixed` for `n` / Ctrl+arrow skips), `review`, `load` and `skip` (`s`) events;
+   `n` = first of `Engine.nextZoneExit` (causal scan for the next 1s close beyond ±`S.zone.k`σ, 30 s inside to
+   re-arm, optional lead) and `Engine.nextBigCandle` (2 s AFTER a 1s candle with range ≥ `S.zone.big` × the prior
+   5-min max 1s range; never a lead, that would leak); refused in a position; client state `W` in app.js
+   (`watchTick` per frame; `seek(ms, continuous)` — forward steps are watching). Trades get
+   `after_rewind` (`Engine.seenBefore`: a fill inside an EARLIER pass's span) and
+   `after_review`. Clicking a Practice row edits its note (`PATCH`); ⏱ seeks. `/api/export` =
+   all trades + watch log. Reset keeps the watch log.
    **Random-blind practice** (`r` / 🎲): random session for the root/DTE with `S.blindDate`, which
    hides the date in the date button, meta, Real tab, and chart time labels (`dayLabel` →
    D, D-1, …) until Reveal. Prices still hint at the era.

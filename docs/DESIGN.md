@@ -69,6 +69,33 @@ shortcut leaks future data.
 | Seeking | can't seek before an open position's last fill | un-doing a trade, or an add, by rewinding |
 | Random blind | the date is hidden in the date button, meta line, Real tab and chart labels (D, D-1, …) | recognising the session. Price levels still hint at the era; that is accepted. |
 
+What the rules can't stop (rewinding while flat, opening REVIEW, replaying a day) is **recorded**
+instead, in the watch log (below), so an analysis of practice trades can exclude or discount them.
+
+### Watch log: evidence of what was seen
+
+Mock trades are only useful to someone inferring your rules if they know what you saw.
+`<journal>_watch.jsonl` (next to the journal) is append-only and written by the client.
+
+- **Spans.** Each span is a BLIND stretch you played or stepped through. Spans are grouped into
+  **passes**, and a pass ends at every discontinuity:
+  - a backward seek or step;
+  - a forward jump (timeline, `g`, `End`, ⏱);
+  - REVIEW;
+  - a Load.
+
+  Stepping forward counts as watching. Spans are written in pieces of the same pass about every
+  15 s, and on Load or a tab hide via `sendBeacon`, so a crash loses at most ~15 s.
+- **Events.** `jump` (from / to / `back`), `review`, `load`, and `skip` (`s`: a setup seen and
+  passed on, with a note).
+- **Trade flags.** `after_rewind` means some fill's time lies inside a span of an **earlier** pass
+  (`Engine.seenBefore`, unit-tested), including spans from earlier loads of the same session.
+  `after_review` means REVIEW was opened on that session before the trade. Both are carried on
+  the open position so an add can't lose them.
+- **Not prevented.** The log is evidence, not enforcement: nothing stops a rewind while flat.
+  Practice **Reset** deletes trades but keeps the watch log, so re-trading a reset session is
+  still flagged.
+
 There is **no forward interpolation**: SPEC §4B originally proposed it for smoothness, and it
 was removed because interpolating toward the next sample is a leak. Smoothness comes from the
 `requestAnimationFrame` clock and incremental `series.update()` calls.
@@ -177,6 +204,14 @@ archive (read-only parquet) ─► slicer.py / history.py / trades.py ─► ser
 - Panes sync their logical ranges only when their intervals match. Crosshair positions sync by
   time.
 - Chart times are fake-UTC seconds displayed as ET wall-clock time.
+- **Sliding window (performance).** lightweight-charts 4.2 re-walks every row of a series on the
+  repaint after each `update()`, so per-frame cost grows with series length (a 1s pane at 15:40
+  is ~22k rows × ~17 series; playback fell to ~5 fps). In BLIND each series therefore holds
+  only the newest `WIN_ROWS` (2,500) rows: it is trimmed in `WIN_SLACK` steps only while you
+  follow the newest bar, grows back by `WIN_GROW` when you scroll to its left edge, and REVIEW
+  (no per-frame updates) keeps everything. `Pane.off()` maps today's bar 0 to its logical index;
+  markers before the window are dropped rather than pinned to its first bar. A forming bar that
+  hasn't changed since the last frame isn't re-sent. Result: ~55 fps at 15:40 (5×), flat heap.
 
 ## Privacy and safety
 
@@ -185,6 +220,8 @@ archive (read-only parquet) ─► slicer.py / history.py / trades.py ─► ser
   server binds to localhost.
 - The journal, uploads, `order_history.json`, `config.local.json` and `cache/` are git-ignored.
   The broker file is only ever opened for reading.
+- Uploaded trade files are kept in that browser's `localStorage` (so they survive reloads and
+  day changes) until **Clear**; nothing is sent anywhere except the local server's parser.
 - The tests run entirely on a synthetic archive in a temp directory (`tests/fixtures.py`) and
   redirect the journal and broker paths, so they never touch real data. A test that needs the
   real archive skips itself when the archive is absent.

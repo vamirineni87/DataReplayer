@@ -88,6 +88,46 @@ def test_journal_reset_is_scoped_to_one_session():
         assert trades.journal_reset(str(SESSION), 'SPXW') == 0
 
 
+def test_notes_flags_and_watch_log():
+    with FakeArchive():
+        rec = {'session_date': str(SESSION), 'root': 'SPXW', 'dte': 0, 'expiry': str(EXPIRY),
+               'osi': osi('SPXW', 'C', 7750), 'strike': 7750, 'type': 'C', 'qty': 1, 'entry_t': OPEN_MS,
+               'entry_mid': 10.0, 'exit_t': OPEN_MS + 1000, 'exit_bid': 10.5,
+               'note': 'x' * 5000, 'after_rewind': 1, 'after_review': 0}
+        saved = trades.journal_append(rec)
+        assert len(saved['note']) == trades.NOTE_MAX
+        assert saved['after_rewind'] is True and saved['after_review'] is False and saved['blind_date'] is False
+        assert trades.journal_set_note(saved['id'], '3rd touch, failed push')['note'] == '3rd touch, failed push'
+        assert trades.journal_read()[0]['note'] == '3rd touch, failed push'      # persisted
+        _raises(KeyError, trades.journal_set_note, 'missing', 'n')
+
+        # the watch log lives next to the journal it belongs to
+        assert trades.watch_path().parent == config.JOURNAL_PATH.parent
+        assert trades.watch_path().name == f'{config.JOURNAL_PATH.stem}_watch.jsonl'
+        base = {'session_date': str(SESSION), 'root': 'SPXW', 'dte': 0, 'load_id': 'L1'}
+        out = trades.watch_append([
+            {**base, 'kind': 'load', 'at': OPEN_MS},
+            {**base, 'kind': 'span', 'pass': 'L1:1', 'from': OPEN_MS + 0.7, 'to': OPEN_MS + 60000.2},
+            {**base, 'kind': 'jump', 'from': OPEN_MS + 60000, 'to': OPEN_MS, 'back': True},
+            {**base, 'kind': 'skip', 't': OPEN_MS + 30000.9, 'note': 'walk stalled'},
+            {**base, 'session_date': str(PRIOR), 'kind': 'review', 'at': OPEN_MS},
+        ])
+        assert all(e['id'] and e['logged_at'] for e in out)
+        assert out[1]['from'] == OPEN_MS and out[1]['to'] == OPEN_MS + 60000 and out[3]['t'] == OPEN_MS + 30000
+        assert [e['kind'] for e in trades.watch_read(str(SESSION), 'SPXW')] == ['load', 'span', 'jump', 'skip']
+        assert trades.watch_set_note(out[3]['id'], 'no follow-through')['note'] == 'no follow-through'
+        assert trades.watch_read(str(SESSION))[3]['note'] == 'no follow-through'
+        _raises(ValueError, trades.watch_append, [{**base, 'kind': 'nope'}])
+        _raises(ValueError, trades.watch_append, [{'kind': 'span', 'from': 1, 'to': 2}])        # no session
+        _raises(ValueError, trades.watch_append, [{**base, 'kind': 'span', 'from': 5, 'to': 2}])
+        _raises(ValueError, trades.watch_append, {'kind': 'load'})
+        assert len(trades.watch_read()) == 5                                    # failed batches wrote nothing
+
+        exp = trades.export_all()
+        assert exp['journal_file'] == config.JOURNAL_PATH.name
+        assert len(exp['trades']) == 1 and len(exp['watch']) == 5
+
+
 def test_quote_at_is_exact_and_never_early():
     with FakeArchive():
         sym = osi('SPXW', 'C', 7750)
@@ -130,5 +170,12 @@ def test_trade_routes():
             assert q['bid'] == 12.0 and q['t'] == 10 * 3600_000
             saved = call('/api/journal', 'POST', {**rec, 'entry_t': OPEN_MS + 0.6, 'exit_t': OPEN_MS + 60000.4})
             assert saved['entry_t'] == OPEN_MS and saved['exit_t'] == OPEN_MS + 60000
+            assert call(f'/api/journal?id={saved["id"]}', 'PATCH', {'note': 'why'})['note'] == 'why'
+            ev = call('/api/watch', 'POST', {'events': [{'kind': 'skip', 'session_date': str(SESSION),
+                                                        'root': 'SPXW', 't': OPEN_MS, 'note': ''}]})['events'][0]
+            assert call(f'/api/watch?id={ev["id"]}', 'PATCH', {'note': 'late'})['note'] == 'late'
+            assert call(f'/api/watch?date={SESSION}&root=SPXW')['events'][0]['note'] == 'late'
+            exp = call('/api/export')
+            assert exp['trades'][-1]['note'] == 'why' and exp['watch'][0]['kind'] == 'skip'
         finally:
             srv.shutdown()

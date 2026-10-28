@@ -181,10 +181,19 @@ session if its first entry or last exit falls on that day. Entry and exit prices
 quantity-weighted. P&L appears only once the trip is flat. Shorts and multi-leg trades are
 displayed, but only long single options are simulated.
 
-### Practice export
+### Practice export (or any list of round trips)
 
 **Export** in the Practice tab downloads the session's journal rows (schema below). Uploading
 that file shows it as an overlay, which is handy for comparing two runs of the same day.
+
+The same loader takes any JSON **list of round trips** with `entry_t` (e.g. a strategy's
+backtest output): `session_date`, `entry_t` / `exit_t` (ms since ET midnight), `entry_price` /
+`exit_price` (or `entry_mid` / `exit_bid`), `pnl`, and optionally `osi` / `symbol`, `type`,
+`strike`, `qty`, `tag`, `note`. `pnl` is shown as given (fees included or not, your choice).
+
+An uploaded file is **kept** (browser storage) and re-filtered to each session you load, so a
+multi-day file shows each day's trades on that day; **Clear** forgets the files. In BLIND,
+trades appear as the clock reaches them; `v` (REVIEW) shows the whole day.
 
 ## Practice journal (`journal/trades.jsonl`)
 
@@ -195,7 +204,8 @@ git-ignored. The server recomputes `pnl` and floors times to whole ms.
 {"id": "2bac42dbf0a2", "source": "practice", "session_date": "2026-08-28", "root": "SPXW", "dte": 0,
  "expiry": "2026-08-28", "osi": "SPXW  260828P07740000", "strike": 7740, "type": "P", "side": "long_put",
  "qty": 1, "offset": 0, "entry_t": 34624400, "entry_mid": 17.1, "exit_t": 34631449, "exit_bid": 16.7,
- "pnl": -40.0, "mfe": 0, "mae": -40.0, "note": "", "tag": "", "created_at": "2026-10-22T06:13:34+00:00"}
+ "pnl": -40.0, "mfe": 0, "mae": -40.0, "note": "3rd touch, failed push", "tag": "",
+ "after_rewind": false, "after_review": false, "blind_date": false, "created_at": "2026-10-22T06:13:34+00:00"}
 ```
 
 The fields:
@@ -206,6 +216,28 @@ The fields:
 - `fills` is present only for a **scaled-in** trade, as `[{"t", "mid", "qty"}, …]` in time order.
   The server derives `qty` (the sum), `entry_mid` (the quantity-weighted average), `entry_t` (the
   first fill) and `pnl` from it, ignoring whatever totals the client sent.
+- `note` is free text (≤ 1000 chars), editable later by clicking the trade (`PATCH`).
+- `after_rewind`: a fill's time had already been watched on an earlier pass (you rewound).
+  `after_review`: REVIEW had been opened on this session before the trade. `blind_date`: taken in
+  random-blind mode. Older rows lack these three fields; treat a missing field as unknown.
+
+## Watch log (`<journal stem>_watch.jsonl`)
+
+The watch log sits next to the journal; with the default journal it is
+`journal/trades_watch.jsonl`. It has one JSON event per line, all sharing `id`, `kind`,
+`session_date`, `root`, `dte`, `load_id`, `blind_date` and `logged_at` (server UTC). Times are
+session ms.
+
+| `kind` | Extra fields | Meaning |
+|---|---|---|
+| `load` | `at`, `mode`, `prior_spans`, `wall` | the session was (re)loaded; a new pass starts |
+| `span` | `pass`, `from`, `to`, `max_speed`, `wall_from`, `wall_to` | BLIND time `[from, to]` was watched during pass `pass`; long stretches arrive as several contiguous pieces with the same `pass` |
+| `jump` | `from`, `to`, `back`, `mode`; optional `rule` | a discontinuity: `back: true` is a rewind; a forward jump skips unwatched time. The next span has a new `pass`. `rule: "zone"` (with `k`, `lead_s`, `big`, `stop`) = an `n` skip: the skipped time stayed inside ±`k`σ of VWAP and had no 1s candle ≥ `big`× the prior 5-min max range, so it was passed over by rule, not missed. `stop` says which rule ended it: `sigma`, `candle` (2 s after the candle), or `close`. `rule: "fixed"` (with `by_s`) = a Ctrl+→ jump. |
+| `review` | `at`, `wall` | REVIEW was opened, so the whole day was visible from then on |
+| `skip` | `t`, `note`, `pass`, `offset`, `underlying`, `chart`, `wall` | `s`: a setup was seen and deliberately passed on |
+
+"Watched" means the union of `span`s. A 1.8σ+ event inside that union with no trade and no
+`skip` was seen and not acted on. Outside it, it wasn't seen.
 
 ## Slice JSON and HTTP API
 
@@ -221,6 +253,10 @@ The server listens on localhost only.
 | `GET`, `POST`, `DELETE /api/journal` | read, append, or delete practice trades. `DELETE ?id=` removes one; `?date=&root=` resets a session. |
 | `GET /api/broker?date=` | broker round trips touching `date` |
 | `POST /api/parse-trades?date=&name=` | parse an uploaded file into round trips |
+| `PATCH /api/journal?id=` | `{note}`: set a practice trade's note |
+| `GET /api/watch?date=&root=`, `POST /api/watch` | read / append watch-log events (`{events: [...]}`) |
+| `PATCH /api/watch?id=` | `{note}`: set a skip's note |
+| `GET /api/export` | `{exported_at, journal_file, trades, watch}`: everything, for an analysis |
 
 A slice (`python -m replayer.slicer DATE ROOT DTE --out f.json` writes the same thing):
 

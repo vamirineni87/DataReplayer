@@ -456,8 +456,56 @@
     return Date.UTC(y, mo - 1, d) / 1000 + Math.floor(ms / 1000);
   }
 
+  /** Was clock time t already watched on an EARLIER pass? `spans` are watch-log spans
+   *  {pass, from, to}; spans of the current pass don't count (that's just watching it now). */
+  function seenBefore(spans, pass, t) {
+    return spans.some((s) => s.pass !== pass && s.from <= t && t <= s.to);
+  }
+
+  /** Next instant after `from` where the 1s close is >= k σ from session VWAP — "skip the dead
+   *  zone". Only rows in order are tested, each with its own as-of VWAP/σ, so the answer is the
+   *  clock a paused-on-breakout playback would reach (stamps are second-end: visible at t[j]).
+   *  If already outside ±k at `from`, price must first come back inside and STAY inside for
+   *  `rearmMs` (so edge chatter / the tiny-σ open doesn't stop every second). null = none. */
+  function nextZoneExit(t, close, vwap, sd, from, k, rearmMs = 0) {
+    const out = (j) => sd[j] > 0 && Math.abs(close[j] - vwap[j]) >= k * sd[j];
+    const i0 = asOfIndex(t, from);
+    let armed = i0 < 0 || !out(i0), inSince = null;
+    for (let j = i0 + 1; j < t.length; j++) {
+      if (t[j] <= from) continue;
+      if (!armed) {
+        if (out(j)) inSince = null;
+        else if (inSince == null) inSince = t[j];
+        if (inSince != null && t[j] - inSince >= rearmMs) armed = true;
+        continue;
+      }
+      if (out(j)) return t[j];
+    }
+    return null;
+  }
+
+  /** Next "outsized 1s candle": high−low >= factor × the largest 1s range of the `windowMs`
+   *  before it (needs a full window since `openMs`). Returns the STOP time = bar stamp + delayMs
+   *  (stamps are second-end, so the candle is complete and seen before the stop), first one
+   *  strictly after `from`. Causal: each bar is judged only against earlier bars. null = none. */
+  function nextBigCandle(t, h, l, from, factor, openMs, windowMs = 300000, delayMs = 2000) {
+    if (!(factor > 0)) return null;
+    const dq = [];                                   // indices, ranges decreasing (sliding max)
+    const rng = (i) => h[i] - l[i];
+    for (let i = Math.max(0, asOfIndex(t, from - delayMs - windowMs)); i < t.length; i++) {
+      while (dq.length && t[dq[0]] < t[i] - windowMs) dq.shift();
+      const r = rng(i);
+      if (t[i] + delayMs > from && t[i] - openMs >= windowMs && dq.length && r > 0 && r >= factor * rng(dq[0])) {
+        return t[i] + delayMs;
+      }
+      while (dq.length && rng(dq[dq.length - 1]) <= r) dq.pop();
+      dq.push(i);
+    }
+    return null;
+  }
+
   return {
-    SPEEDS, INTERVALS, MAX_FRAME_MS,
+    SPEEDS, INTERVALS, MAX_FRAME_MS, seenBefore, nextZoneExit, nextBigCandle,
     asOfIndex, valueAsOf, advanceClock, buildBuckets, bucketOf, barAsOf, fullBars,
     bucketCloseValues, liveSub, priceAsOf, tapeCum, tapeStats, mtfBB, mtfEMA, canOpen, canClose, avgEntry, optionPnl, excursion, tradeMarkers, tradeConnectors, emaSeries, emaStep, lastValues, bbOf, bbSeries, ohlcvAsOf, fullOhlcv, vwapSeries, profileSeries, profileAsOf, valueArea, pickStrike, stepBoundary, parseClock, fmtClock, chartTime,
   };

@@ -99,7 +99,9 @@
       <span class="right">
         <button id="jUpload" title="Load trades from a JSON file (order_history.json format or a practice export)">Upload</button>
         <button id="jExport" title="Download this session's practice trades as JSON">Export</button>
+        <button id="jExportAll" title="Download every practice trade + the whole watch log (watched spans, rewinds, REVIEW, skips)">Export all</button>
         <button id="jReset" title="Delete this session's practice trades (asks first)">Reset</button>
+        <button id="jClear" class="hidden" title="Forget the uploaded trade files (nothing on disk changes)">Clear</button>
       </span>
       <input id="jFile" type="file" accept=".json,application/json" class="hidden">
     </div>
@@ -119,11 +121,31 @@
   <button id="slower" title="Slower ([)">&minus;</button>
   <span id="speed2" class="speed">1×</span>
   <button id="faster" title="Faster (])">+</button>
-  <input id="timeline" type="range" min="0" max="1" step="1000" value="0">
+  <div class="tl">
+    <input id="timeline" type="range" min="0" max="1" step="1000" value="0">
+    <canvas id="ruler" title="5-minute ticks; taller at :15/:30/:45 and the hour"></canvas>
+  </div>
   <input id="goto" type="text" placeholder="10:32" title="Jump to ET time (g)" size="8">
+  <span class="zone" title="Skip the dead zone (n): jump to the next 1s close beyond ±kσ of session VWAP, or 2 s after an outsized 1s candle, whichever is first. Ctrl+→ = +30s, Ctrl+Shift+→ = +5m">
+    <button id="zoneBtn">&#x23ED;σ <kbd>n</kbd></button>
+    ±<input id="zoneK" type="number" min="0.5" max="5" step="0.1" value="1.5">σ
+    <select id="zoneLead" title="Stop this many seconds before the move, to watch the approach">
+      <option value="0">at move</option><option value="30">30s early</option><option value="60">60s early</option><option value="120">2m early</option>
+    </select>
+    <span title="Also stop 2 s after a 1s candle whose high-low is at least this many times the largest 1s range of the previous 5 minutes (0 = off)">· bar ≥<input id="zoneBig" type="number" min="0" max="50" step="0.5" value="3">×5m</span>
+  </span>
 </footer>
 
 <div id="toasts" class="toasts"></div>
+
+<div id="noteDlg" class="overlay hidden">
+  <div class="help notedlg">
+    <h2 id="noteTitle"></h2>
+    <textarea id="noteText" rows="3" maxlength="1000" placeholder="e.g. 3rd touch, failed push"></textarea>
+    <div class="notebtns"><span class="muted">Enter saves · Shift+Enter new line · Esc cancels</span>
+      <button id="noteCancel">Cancel</button><button id="noteSave" class="primary">Save</button></div>
+  </div>
+</div>
 <div id="drop" class="overlay drop hidden"><div>Drop a trades JSON to overlay it</div></div>
 <div id="overlay" class="overlay hidden"><div id="overlayMsg"></div></div>
 
@@ -138,6 +160,10 @@
       <tr><td>&rarr; / &larr;</td><td>step one bar (finest pane) · Shift = coarsest pane</td></tr>
       <tr><td>[ / ]</td><td>speed down / up (0.25× … 60×, Max)</td></tr>
       <tr><td>Home / End</td><td>jump to open / close</td></tr>
+      <tr><td>Ctrl+&rarr; / &larr;</td><td>jump 30 s · with Shift 5 min</td></tr>
+      <tr><td>n</td><td>skip the dead zone: next 1s close beyond ±kσ of VWAP, or 2 s after a 1s candle ≥ F× the largest 1s range of the prior 5 min, whichever is first (k, "stop early" and F in the footer; refused in a position; ±k drawn dashed)</td></tr>
+      <tr><td>s</td><td>skip: log "saw a setup, passed" at the clock, with an optional reason (Enter saves, Esc cancels)</td></tr>
+      <tr><td>notes</td><td>click a Practice trade, skip or the open position to add / edit its note · ⏱ jumps the clock there</td></tr>
       <tr><td>v</td><td>toggle BLIND (future hidden) / REVIEW (whole day)</td></tr>
       <tr><td>g</td><td>jump to a time (type 10:32, Enter)</td></tr>
       <tr><td>r</td><td>random session for this root/DTE with the date hidden (Reveal shows it)</td></tr>
