@@ -189,7 +189,7 @@ that file shows it as an overlay, which is handy for comparing two runs of the s
 The same loader takes any JSON **list of round trips** with `entry_t` (e.g. a strategy's
 backtest output): `session_date`, `entry_t` / `exit_t` (ms since ET midnight), `entry_price` /
 `exit_price` (or `entry_mid` / `exit_bid`), `pnl`, and optionally `osi` / `symbol`, `type`,
-`strike`, `qty`, `tag`, `note`. `pnl` is shown as given (fees included or not, your choice).
+`strike`, `qty`, `tag`, `note` (`tag` and `note` are shown under the row). `pnl` is shown as given (fees included or not, your choice).
 
 An uploaded file is **kept** (browser storage) and re-filtered to each session you load, so a
 multi-day file shows each day's trades on that day; **Clear** forgets the files. In BLIND,
@@ -216,7 +216,7 @@ The fields:
 - `fills` is present only for a **scaled-in** trade, as `[{"t", "mid", "qty"}, …]` in time order.
   The server derives `qty` (the sum), `entry_mid` (the quantity-weighted average), `entry_t` (the
   first fill) and `pnl` from it, ignoring whatever totals the client sent.
-- `note` is free text (≤ 1000 chars), editable later by clicking the trade (`PATCH`).
+- `note` is free text (≤ 1000 chars), editable later with ✎ on the trade (`PATCH`).
 - `after_rewind`: a fill's time had already been watched on an earlier pass (you rewound).
   `after_review`: REVIEW had been opened on this session before the trade. `blind_date`: taken in
   random-blind mode. Older rows lack these three fields; treat a missing field as unknown.

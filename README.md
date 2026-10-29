@@ -101,7 +101,7 @@ Press `?` in the UI for all keys.
 | `j` | trades list |
 | `?` | help |
 
-Click a Practice trade (or a skip, or the open position) to add a note; ⏱ jumps the clock to it.
+Click ✎ on a Practice trade (or a skip, or the open position) to add a note; click the row itself to show it on the charts (same zoom, clock unchanged); ⏱ jumps the clock to it. Both bring the entry price into view at the current vertical zoom.
 
 Mouse: drag the chart to pan; scroll or drag the price axis to unlock price (**A** or a
 double-click re-locks it); **⟫** jumps back to the newest bar; drag the dividers to resize.

@@ -189,14 +189,15 @@ Three layers, data flowing one way:
    each fill counts only from its own as-of row), `tradeMarkers` (one arrow per fill; reveal with
    the clock in BLIND). Position = `{osi, type, strike, offset, fills:[{t, mid, qty, exact}]}`
    (`syncPos` derives qty / entry_mid / entry_t); journal rows of scaled-in trades carry `fills`
-   and the server recomputes qty / entry / P&L from them. Seeking before the LAST fill is clamped; REVIEW is refused while in a position. The trades list lives
+   and the server recomputes qty / entry / P&L from them. Seeking before the LAST fill is clamped; REVIEW is refused while in a position. Side-panel sections (`[data-sect]`, header `.shead`) collapse on click,
+   kept in `S.layout.collapsed`. The trades list lives
    INSIDE the single right-hand side panel, under the option quotes / position (operator wants one
    panel, not a separate journal column); tabs:
    Practice / Real (broker) / Uploaded; markers per source colour. `ConnectorPrimitive` draws
    entry→exit dashed lines at the underlying's prices with a P&L tag (`Engine.tradeConnectors`:
    only once the exit is reached in BLIND); an open position draws a live dotted line to now.
-   Marker TEXT is drawn by `ConnectorPrimitive._drawLabels` at `TRADE_FONT` (6px; markers are set with
-   empty text) because the library sizes marker text from the chart-wide font (would shrink the axes).
+   Trade markers (arrows, dots AND text) are drawn by `ConnectorPrimitive._drawLabels` at `MARK_PX` / `TRADE_FONT`
+   (6px; labels stacked past the bar's last shape), not `setMarkers` because the library sizes marker text from the chart-wide font (would shrink the axes).
    EMA/BB source timeframes include 15m/30m/1h (`TF_MS`) and 1D. "Tape" chip = trades-per-bar
    histogram (own scale above volume); HUD "Tape (10s)" = `Engine.tapeStats` (finished seconds
    only) vs the session average. Practice "Reset" = `DELETE /api/journal?date=&root=`
@@ -209,7 +210,10 @@ Three layers, data flowing one way:
    5-min max 1s range; never a lead, that would leak); refused in a position; client state `W` in app.js
    (`watchTick` per frame; `seek(ms, continuous)` — forward steps are watching). Trades get
    `after_rewind` (`Engine.seenBefore`: a fill inside an EARLIER pass's span) and
-   `after_review`. Clicking a Practice row edits its note (`PATCH`); ⏱ seeks. `/api/export` =
+   `after_review`. ✎ on a Practice row edits its note (`PATCH`); uploaded rows show the file's `tag`/`note`; clicking a row (any tab; carried-in trades → exit) pans the charts there at the
+   current zoom (`Pane.panTo`, no clock change; grows the sliding window via `wantW`); ⏱ seeks. Both call
+   `Pane.showPrice` (lock the price scale at its current height, centred on the entry). After a
+   `setData` the library reports the OLD visible range until it paints — don't read it back then. `/api/export` =
    all trades + watch log. Reset keeps the watch log.
    **Random-blind practice** (`r` / 🎲): random session for the root/DTE with `S.blindDate`, which
    hides the date in the date button, meta, Real tab, and chart time labels (`dayLabel` →

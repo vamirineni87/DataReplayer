@@ -67,6 +67,21 @@ main.no-journal .journal { display: none; }
 .opt.put { border-left: 3px solid var(--down); }
 .quote { display: flex; justify-content: space-between; font-family: ui-monospace, Consolas, monospace; margin-top: 4px; }
 .age { color: var(--muted); font-size: 11px; min-height: 1em; }
+/* collapsible side-panel sections: click a header (state kept in prefs) */
+.shead { cursor: pointer; user-select: none; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+         display: flex; align-items: center; gap: 6px; }
+.shead::before { content: '▾'; font-size: 10px; width: 8px; }
+.sect.collapsed > .shead::before { content: '▸'; }
+.sect.collapsed > .sbody { display: none !important; }
+.sect > .sbody { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.position > .shead { text-transform: none; letter-spacing: 0; color: var(--text); font-size: inherit; }
+.position > .shead::before { color: var(--muted); }
+.opts { display: grid !important; grid-template-columns: 1fr 1fr; gap: 6px; }
+.opts .opt { padding: 5px 6px; min-width: 0; }
+.opts .quote { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; font-size: 11px; color: var(--muted); }
+.opts .quote span { display: flex; flex-direction: column; align-items: flex-start; }
+.opts .quote b { color: var(--text); font-size: 12px; }
+.opts .age { font-size: 10px; }
 .meta { color: var(--muted); font-size: 11px; white-space: pre-line; }
 
 .transport { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line); }
@@ -101,12 +116,13 @@ main.no-journal .journal { display: none; }
 .cal-foot { margin-top: 6px; color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; }
 
 /* trade ticket + position */
-.ticket { border: 1px solid var(--line); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.ticket { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; }
+.ticket > .sbody { gap: 5px; }
 .stepper { display: inline-flex; align-items: center; gap: 6px; }
 .stepper button { padding: 0 8px; }
 .stepper b { min-width: 26px; text-align: center; font-family: ui-monospace, Consolas, monospace; }
 .trade-btns { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
-.trade-btns button { padding: 6px 4px; font-weight: 600; }
+.trade-btns button { padding: 1px 4px; font-weight: 600; font-size: 12px; line-height: 1.4; }
 .buy-call { border-color: var(--up); color: var(--up); }
 .buy-put { border-color: var(--down); color: var(--down); }
 kbd { font: 10px ui-monospace, Consolas, monospace; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; }
@@ -116,6 +132,9 @@ kbd { font: 10px ui-monospace, Consolas, monospace; color: var(--muted); border:
 /* journal panel */
 .hud > .journal { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 220px; min-width: 0;
                   border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.hud > .journal > .shead { padding: 4px 8px 0; }
+.hud > .journal > .jbody { flex: 1; min-height: 0; gap: 0; }
+.hud > .journal.collapsed { flex: none; min-height: 0; padding-bottom: 4px; }
 .jtabs { display: flex; border-bottom: 1px solid var(--line); }
 .jtabs button { flex: 1; border: none; border-radius: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 4px; }
 .jtabs button.active { border-bottom-color: var(--accent); color: var(--accent); }
@@ -165,3 +184,6 @@ button:disabled { opacity: .45; cursor: default; }
 .zone { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--muted); }
 #zoneK { width: 4.4em; }
 #zoneBig { width: 3.6em; }
+.position > .shead #posTitle { flex: 1; }
+.jrow .nb { border: none; background: transparent; padding: 0 3px; color: var(--muted); cursor: pointer; font-size: 12px; }
+.jrow .nb:hover { color: var(--accent); }

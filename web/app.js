@@ -72,7 +72,7 @@
         root: $('root').value, dte: $('dte').value, date: $('date').value,
         speedIdx: S.speedIdx, offset: S.offset, qty: S.qty, view: S.view, histDays: S.histDays,
         panes: S.panes.map((p) => [p.kind, p.iv]), paneInd: S.panes.map((p) => p.ind),
-        layout: S.layout, jtab: S.jtab, show: S.show, zone: S.zone,
+        layout: S.layout, jtab: S.jtab, show: S.show, zone: S.zone, jsort: S.jsort,
       }));
     } catch (e) { /* private mode: prefs are a convenience only */ }
   }
@@ -100,7 +100,8 @@
     blindDate: false,                    // random-blind practice: the date is hidden everywhere
     journal: [], broker: [], uploads: [], uploadFiles: loadUploadFiles(), uploadsReq: 0, brokerNote: '', tradesVer: 0,
     jtab: 'practice', show: { practice: true, broker: true, upload: true },
-    layout: { split: null, hudW: 330, journal: true },
+    jsort: 'asc',                        // trades list by entry time: 'asc' oldest first | 'desc' newest first
+    layout: { split: null, hudW: 330, journal: true, collapsed: {} },
   };
   const speed = () => E.SPEEDS[S.speedIdx];
   const esc = (x) => String(x).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -277,6 +278,7 @@
   // text (markers are set without text): lightweight-charts sizes marker text from the chart-wide
   // font, so smaller trade labels would shrink the axes too.
   const TRADE_FONT = 6;                 // px — half the library's 12
+  const MARK_PX = 6;                    // px — trade arrow / dot size (half the library's 12 minimum)
   class ConnectorPrimitive {
     constructor() {
       this.segs = []; this.labels = [];
@@ -307,7 +309,7 @@
           ctx.beginPath(); ctx.moveTo(x0 * hr, y0 * vr); ctx.lineTo(x1 * hr, y1 * vr); ctx.stroke();
           ctx.setLineDash([]);
           ctx.fillStyle = g.color;
-          for (const [x, y] of [[x0, y0], [x1, y1]]) { ctx.beginPath(); ctx.arc(x * hr, y * vr, 3 * hr, 0, 2 * Math.PI); ctx.fill(); }
+          for (const [x, y] of [[x0, y0], [x1, y1]]) { ctx.beginPath(); ctx.arc(x * hr, y * vr, 1.5 * hr, 0, 2 * Math.PI); ctx.fill(); }
           if (g.text) {
             ctx.font = `bold ${(TRADE_FONT - 0.5) * vr}px ui-monospace, Consolas, monospace`;
             const w = ctx.measureText(g.text).width + 4 * hr, h = 8 * vr;
@@ -321,32 +323,57 @@
         }
       });
     }
-    // Marker text under belowBar arrows / over aboveBar ones, stacked like the library stacks
-    // several markers on one bar. Anchored on that bar's low / high (candles) or value (lines).
+    // Trade markers, drawn here rather than by the library: its shapes have a 12 px minimum and its
+    // text follows the chart-wide font (shrinking it would shrink the axes). Per bar and side, the
+    // shapes stack outward from the bar's low (belowBar) / high (aboveBar) — or its value on line
+    // series — and the bar's labels stack past the last shape.
     _drawLabels(target) {
       const s = this._series, ts = this._chart.timeScale();
       if (!this.labels.length) return;
-      const size = Math.min(Math.max(ts.options().barSpacing, 12), 30);   // library's arrow size
-      const stack = new Map();
+      const A = MARK_PX, GAP = 2, step = A + GAP;
+      const groups = new Map();
+      for (const lb of this.labels) {
+        const k = `${lb.time}|${lb.position}`;
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(lb);
+      }
       target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
         ctx.save();
         ctx.font = `${TRADE_FONT * vr}px ui-monospace, Consolas, monospace`;
         ctx.textAlign = 'center';
-        for (const lb of this.labels) {
-          const x = ts.timeToCoordinate(lb.time);
+        for (const g of groups.values()) {
+          const x = ts.timeToCoordinate(g[0].time);
           if (x == null) continue;
           const d = s.dataByIndex(Math.round(ts.coordinateToLogical(x)));
           if (!d) continue;
-          const below = lb.position === 'belowBar';
+          const below = g[0].position === 'belowBar', dir = below ? 1 : -1;
           const price = d.low != null ? (below ? d.low : d.high) : d.value;
           const y0 = price == null ? null : s.priceToCoordinate(price);
           if (y0 == null) continue;
-          const sk = `${lb.time}|${below}`, n = stack.get(sk) || 0;
-          stack.set(sk, n + 1);
-          const y = below ? y0 + (n + 1) * (size + 2) + 1 : y0 - (n + 1) * (size + 2) - 1;
-          ctx.fillStyle = lb.color;
-          ctx.textBaseline = below ? 'top' : 'bottom';
-          ctx.fillText(lb.text, x * hr, y * vr);
+          g.forEach((lb, n) => {                                    // shapes
+            const top = y0 + dir * (GAP + n * step), cy = top + dir * A / 2;
+            ctx.fillStyle = lb.color;
+            ctx.beginPath();
+            if (lb.shape === 'circle') {
+              ctx.arc(x * hr, cy * vr, (A / 2 - 0.5) * hr, 0, 2 * Math.PI);
+            } else {                                               // arrow pointing at the bar
+              const tip = top, base = top + dir * A * 0.55, end = top + dir * A, hw = A / 2, sw = A / 6;
+              ctx.moveTo(x * hr, tip * vr);
+              ctx.lineTo((x + hw) * hr, base * vr); ctx.lineTo((x + sw) * hr, base * vr);
+              ctx.lineTo((x + sw) * hr, end * vr); ctx.lineTo((x - sw) * hr, end * vr);
+              ctx.lineTo((x - sw) * hr, base * vr); ctx.lineTo((x - hw) * hr, base * vr);
+              ctx.closePath();
+            }
+            ctx.fill();
+          });
+          let n = 0;
+          for (const lb of g) {                                     // labels past the last shape
+            if (!lb.text) continue;
+            const y = y0 + dir * (GAP + g.length * step + n++ * (TRADE_FONT + 1));
+            ctx.fillStyle = lb.color;
+            ctx.textBaseline = below ? 'top' : 'bottom';
+            ctx.fillText(lb.text, x * hr, y * vr);
+          }
         }
         ctx.restore();
       });
@@ -766,6 +793,44 @@
       this.following = !!r && last >= r.from - 1 && last <= r.to + 1;
       this.liveBtn.classList.toggle('hidden', this.following || S.mode === 'review');
     }
+    // Scroll the view to [t0, t1] (session ms) at the CURRENT zoom — no clock change. Centres on
+    // the middle when the span fits, else on t0. If the sliding window trimmed those rows away,
+    // grow it first (render applies wantW, then re-runs the pan).
+    panTo(t0, t1) {
+      if (!this.chart || !this.b) return;
+      const I = E.INTERVALS[this.iv], m = S.meta;
+      const kOf = (ms) => Math.max(0, Math.min(this.b.n - 1, Math.floor((ms - m.open_ms) / I)));
+      const ts = this.chart.timeScale(), r = ts.getVisibleLogicalRange(), w = r ? r.to - r.from : 120;
+      const k0 = kOf(t0), k1 = t1 != null ? kOf(t1) : k0;
+      const k = k1 - k0 < 0.8 * w ? (k0 + k1) / 2 : k0;
+      const idx = this.off() + k;
+      this.following = false;
+      if (idx - w / 2 < 0 && this.w > 0) {
+        this.wantW = Math.max(0, this.w + Math.floor(idx - w / 2) - 20);
+        this.pendingPan = [t0, t1]; this.R.full = true;
+        return;
+      }
+      const nr = { from: idx - w / 2, to: idx + w / 2 };
+      ts.setVisibleLogicalRange(nr);
+      // right after a setData the library still reports the old range, so judge "following" on nr
+      const last = this.lastIndex();
+      this.following = last >= nr.from - 1 && last <= nr.to + 1;
+      this.liveBtn.classList.toggle('hidden', this.following || S.mode === 'review');
+    }
+    // Bring price p into view at the CURRENT vertical zoom: lock the scale to the same height,
+    // centred on p — unless it's already locked with p comfortably inside. (Options panes skip.)
+    showPrice(p) {
+      if (!this.chart || !this.main || p == null || this.kind === 'options') return;
+      const r = this.lock || this.visiblePriceRange();
+      if (!r) return;
+      const h = r.hi - r.lo;
+      if (this.lock && p > r.lo + 0.1 * h && p < r.hi - 0.1 * h) return;
+      this.setLock({ lo: p - h / 2, hi: p + h / 2 });
+    }
+    priceAt(ms) {
+      const src = this.kind === 'chart' ? [S.data.chart.t, S.data.chart.c] : [S.data.underlying.t, S.data.underlying.p];
+      return E.valueAsOf(src[0], src[1], ms);
+    }
     goLive() {
       if (!this.chart) return;
       const ts = this.chart.timeScale(), r = ts.getVisibleLogicalRange(), last = this.lastIndex();
@@ -915,9 +980,9 @@
       const first = this.w > this.hrows.length ? this.times[this.w - this.hrows.length] : -Infinity;
       marks = marks.filter((mk) => mk.time >= first).sort((a, b) => a.time - b.time);
       // text is drawn small by the connector primitive (TRADE_FONT); the library draws the shapes
-      const labels = marks.filter((mk) => mk.text).map(({ time, position, color, text }) => ({ time, position, color, text }));
-      if (this.conn) this.conn.set(live ? this.segs.concat([live]) : this.segs, labels);
-      this.main.setMarkers(this.conn ? marks.map((mk) => ({ ...mk, text: '' })) : marks);
+      // shapes + text are drawn small by the connector primitive (MARK_PX / TRADE_FONT)
+      if (this.conn) this.conn.set(live ? this.segs.concat([live]) : this.segs, marks);
+      else this.main.setMarkers(marks);
     }
 
     // First view after a (re)build, anchored on the clock's bar k. No history -> that bar
@@ -962,6 +1027,7 @@
       else if ((R.full || (this.following && !this.dragging)) && rows - w > WIN_ROWS + WIN_SLACK) w = rows - WIN_ROWS;
       if (R.full && this.keepW != null && S.mode !== 'review') { w = Math.min(this.keepW, w); }
       w = Math.min(w, Math.max(0, rows - WIN_ROWS));            // jumped back: keep WIN_ROWS ending at k
+      if (this.wantW != null) { if (S.mode !== 'review') w = Math.min(w, this.wantW); this.wantW = null; }   // panTo
       this.keepW = null; this.growing = false;
       const shift = w - this.w;                                 // logical indexes move left by this
       const rebuild = R.full || shift !== 0 || R.mode !== S.mode || R.sel !== sel || (S.mode === 'blind' && k < R.k);
@@ -1012,6 +1078,7 @@
         }
         R.clock = S.clock; R.k = k; R.mode = S.mode; R.sel = sel; R.full = false; R.fresh = false;
         if (!this.hover) this.drawLegend(null);
+        if (this.pendingPan) { const [a, b] = this.pendingPan; this.pendingPan = null; this.panTo(a, b); }
       }
       this.updateMarkers(k);
     }
@@ -1053,6 +1120,16 @@
     const main = $('main');
     main.style.setProperty('--hud-w', `${S.layout.hudW}px`);
     main.classList.toggle('no-journal', !S.layout.journal);
+    const col = S.layout.collapsed || {};
+    for (const el of document.querySelectorAll('[data-sect]')) el.classList.toggle('collapsed', !!col[el.dataset.sect]);
+  }
+  // Side-panel sections collapse on a click of their header (kept in prefs with the layout).
+  for (const el of document.querySelectorAll('[data-sect]')) {
+    el.querySelector(':scope > .shead').addEventListener('click', () => {
+      const k = el.dataset.sect;
+      S.layout.collapsed = { ...(S.layout.collapsed || {}), [k]: !el.classList.contains('collapsed') };
+      applyColumns(); savePrefs();
+    });
   }
   function dragger(el, onMove) {
     el.addEventListener('mousedown', (ev) => {
@@ -1299,7 +1376,7 @@
     const tab = S.jtab;
     const list = tab === 'practice' ? S.journal : S.blindDate ? [] : tab === 'broker' ? S.broker : S.uploads;
     const shown = tab === 'practice' ? list : list.filter(visibleInBlind);
-    const key = `${tab}|${S.tradesVer}|${shown.length}|${W.skips.filter((x) => x.t <= S.clock).length}|${S.mode}|${S.show[tab]}|${S.pos ? 1 : 0}|${S.blindDate}`;
+    const key = `${tab}|${S.tradesVer}|${shown.length}|${W.skips.filter((x) => x.t <= S.clock).length}|${S.mode}|${S.show[tab]}|${S.pos ? 1 : 0}|${S.blindDate}|${S.jsort}`;
     if (!force && key === lastJournalKey) return;
     lastJournalKey = key;
     for (const b of document.querySelectorAll('.jtabs button')) b.classList.toggle('active', b.dataset.tab === tab);
@@ -1321,16 +1398,21 @@
     const practice = tab === 'practice';
     const noteLine = (n) => (n ? `<span class="note">${esc(n)}</span>` : '');
     const go = (t) => (t != null ? `<button class="go" data-go="${t}" title="Jump the clock here (going back is logged as a rewind)">⏱</button>` : '');
+    const nb = (kind, id) => `<button class="nb" data-nk="${kind}" data-nid="${id || ''}" title="Add / edit the note">✎</button>`;
+    const showTitle = 'Click to show it on the charts (same zoom; the clock doesn’t move)';
+    let openRow = '';
     if (practice && S.pos) {
-      rows.push(`<div class="jrow" data-kind="open" title="Click to add a note"><span class="c">OPEN ${S.pos.type} ${S.pos.strike} ×${S.pos.qty}</span>` +
-        `<span class="p muted">live</span><span class="t">${E.fmtClock(S.pos.entry_t)} →</span><span class="px">${S.pos.entry_mid.toFixed(2)}</span>${noteLine(S.pos.note)}</div>`);
+      openRow = (`<div class="jrow" data-t="${S.pos.entry_t}" title="${showTitle}"><span class="c">OPEN ${S.pos.type} ${S.pos.strike} ×${S.pos.qty}</span>` +
+        `<span class="p muted">live ${nb('open')}</span><span class="t">${E.fmtClock(S.pos.entry_t)} →</span><span class="px">${S.pos.entry_mid.toFixed(2)}</span>${noteLine(S.pos.note)}</div>`);
     }
     const skips = practice ? W.skips.filter((x) => S.mode === 'review' || x.t <= S.clock) : [];
     const items = shown.map((t) => ({ t: t.entry_t ?? 0, tr: t })).concat(skips.map((x) => ({ t: x.t, sk: x })));
-    for (const { tr: t, sk } of items.sort((a, b) => b.t - a.t)) {
+    const dir = S.jsort === 'asc' ? 1 : -1;
+    if (openRow && dir < 0) rows.push(openRow);                    // the open position is the newest
+    for (const { tr: t, sk } of items.sort((a, b) => dir * (a.t - b.t))) {
       if (sk) {
-        rows.push(`<div class="jrow skip" data-kind="skip" data-id="${sk.id}" title="Click to edit the note">` +
-          `<span class="c">SKIP</span><span class="p muted">${go(sk.t)}</span><span class="t">${E.fmtClock(sk.t)}</span><span class="px"></span>${noteLine(sk.note)}</div>`);
+        rows.push(`<div class="jrow skip" data-t="${sk.t}" title="${showTitle}">` +
+          `<span class="c">SKIP</span><span class="p muted">${nb('skip', sk.id)}${go(sk.t)}</span><span class="t">${E.fmtClock(sk.t)}</span><span class="px"></span>${noteLine(sk.note)}</div>`);
         continue;
       }
       const ep = t.entry_price ?? t.entry_mid, xp = t.exit_price ?? t.exit_bid;
@@ -1338,13 +1420,19 @@
       const del = practice ? `<button class="del" data-del="${t.id}" title="Delete from journal">✕</button>` : '';
       const flags = (t.after_rewind ? ' <span class="flag" title="Entered on time already watched (after a rewind)">↺</span>' : '')
         + (t.after_review ? ' <span class="flag" title="REVIEW was opened on this session before this trade">R</span>' : '');
-      rows.push(`<div class="jrow"${practice ? ` data-kind="trade" data-id="${t.id}" title="Click to add / edit a note"` : ` data-t="${t.entry_t ?? ''}"`}>` +
+      const at = t.entry_t ?? t.exit_t;                              // carried in from a prior day: show the exit
+      const memo = practice ? t.note : [t.tag, t.note].filter(Boolean).join(' — ');   // uploads keep the file's tag / note
+      rows.push(`<div class="jrow" data-t="${at ?? ''}" data-x="${t.entry_t != null ? t.exit_t ?? '' : ''}" title="${showTitle}">` +
         `<span class="c">${name}${flags}${t.unsaved ? ' <span class="neg">(unsaved)</span>' : ''}</span>` +
-        `<span class="p ${sgnCls(t.pnl)}">${money(t.pnl)} ${practice ? go(t.entry_t) : ''}${del}</span>` +
+        `<span class="p ${sgnCls(t.pnl)}">${money(t.pnl)} ${practice ? nb('trade', t.id) : ''}${go(at)}${del}</span>` +
         `<span class="t">${t.entry_t != null ? E.fmtClock(t.entry_t) : t.entry_ts ? t.entry_ts.slice(0, 10) : '—'} → ${t.exit_t != null ? E.fmtClock(t.exit_t) : t.exit_ts ? t.exit_ts.slice(0, 10) : 'open'}</span>` +
-        `<span class="px">${f2(ep)} → ${f2(xp)}</span>${practice ? noteLine(t.note) : ''}</div>`);
+        `<span class="px">${f2(ep)} → ${f2(xp)}</span>${noteLine(memo)}</div>`);
     }
-    $('jList').innerHTML = rows.join('') || '<div class="jfoot muted">No trades.</div>';
+    if (openRow && dir > 0) rows.push(openRow);
+    $('jSort').textContent = dir > 0 ? '↑ oldest' : '↓ newest';
+    const jl = $('jList'), atEnd = jl.scrollTop + jl.clientHeight >= jl.scrollHeight - 4;
+    jl.innerHTML = rows.join('') || '<div class="jfoot muted">No trades.</div>';
+    if (dir > 0 && atEnd) jl.scrollTop = jl.scrollHeight;          // oldest first: keep the newest in view
     const hidden = list.length - shown.length;
     $('jFoot').textContent = (hidden > 0 ? `${hidden} later trade${hidden === 1 ? '' : 's'} hidden until the clock reaches them (BLIND) — press v for REVIEW to see all. ` : '')
       + (tab === 'broker' ? (S.blindDate ? 'Hidden during random-blind practice — Reveal to show.' : (S.brokerNote || 'From order_history.json (read-only).')) : '')
@@ -1366,12 +1454,26 @@
       return;
     }
     const go = ev.target.closest('[data-go]');
-    if (go) { ev.stopPropagation(); seek(+go.dataset.go); return; }
+    if (go) {
+      ev.stopPropagation();
+      const t = +go.dataset.go;
+      seek(t);
+      for (const p of S.panes) p.showPrice(p.kind === 'none' ? null : p.priceAt(t));   // same zoom, entry in view
+      return;
+    }
+    const nbtn = ev.target.closest('[data-nk]');
+    if (nbtn) { ev.stopPropagation(); return editNote(nbtn.dataset.nk, nbtn.dataset.nid); }
     const row = ev.target.closest('.jrow');
-    if (!row) return;
-    if (row.dataset.kind) return editNote(row.dataset.kind, row.dataset.id);   // practice: notes
-    if (row.dataset.t) seek(+row.dataset.t);                                   // overlays: jump
+    if (!row || !row.dataset.t || !S.data) return;                    // other-day overlay rows: nothing to show
+    const t0 = +row.dataset.t, t1 = row.dataset.x ? +row.dataset.x : null;
+    if (S.mode === 'blind' && t0 > S.clock) return toast('That’s after the clock — not on the chart yet', 'err');
+    for (const p of S.panes) {
+      if (p.kind === 'none') continue;
+      p.panTo(t0, t1 != null && (S.mode === 'review' || t1 <= S.clock) ? t1 : null);
+      p.showPrice(p.priceAt(t0));
+    }
   };
+  $('jSort').onclick = (ev) => { ev.currentTarget.blur(); S.jsort = S.jsort === 'asc' ? 'desc' : 'asc'; savePrefs(); renderJournal(true); };
   $('jExportAll').onclick = async (ev) => {
     ev.target.blur();
     try {
@@ -1948,6 +2050,7 @@
     if (p.zone && p.zone.k > 0) S.zone = { k: +p.zone.k, lead: +p.zone.lead || 0, big: p.zone.big == null ? 3 : +p.zone.big };
     $('zoneK').value = S.zone.k; $('zoneLead').value = String(S.zone.lead); $('zoneBig').value = S.zone.big;
     if (p.jtab) S.jtab = p.jtab;
+    if (p.jsort === 'asc' || p.jsort === 'desc') S.jsort = p.jsort;
     if (Array.isArray(p.paneInd)) p.paneInd.forEach((ind, i) => {
       if (S.panes[i] && ind) S.panes[i].ind = { ...defaultInd(), ...ind, ema: { ...defaultInd().ema, ...ind.ema }, bb: { ...defaultInd().bb, ...ind.bb } };
     });

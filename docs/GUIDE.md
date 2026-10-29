@@ -17,12 +17,14 @@ A tour of the replay UI with screenshots. All shots are real SPXW 0DTE sessions 
 - Every fill is **re-priced server-side at the exact millisecond** from the full tick tape.
 - **Offset** (`,` `.`) shifts the strike from ATM (+ = OTM); **Qty** with `;` `'`.
 - The side panel shows the clock, SPY / VWAP (σ distance) / tape speed / VA / SPX, the CALL and PUT
-  quotes at the current offset (with quote age), and the **position card**: entry mid, bid now,
-  unrealized P&L and MFE / MAE.
+  quotes side by side at the current offset (with quote age), and the **position card**: entry mid,
+  bid now, unrealized P&L and MFE / MAE. Click any section header (Market, Ticket, Quotes, the
+  position title, Trades, Session) to collapse it; the choice is remembered.
 - Trades are drawn on both charts: entry / exit markers and a **dashed entry→exit line with the
   P&L tag**; an open position draws a dotted line to now.
 - The **trades list** sits under the quotes in the same panel: tabs **Practice / Real / Uploaded**,
-  per-session summary (count, win rate, total P&L), `on chart` toggle, **Upload** (JSON in
+  per-session summary (count, win rate, total P&L), `on chart` toggle, **↑ oldest / ↓ newest**
+  (order by entry time; oldest first by default), **Upload** (JSON in
   `order_history.json` shape, a practice export, or any list of round trips), **Export**, and
   **Reset** (deletes this session's practice trades after a confirm). `j` hides / shows it.
 - Uploaded files are **remembered across days and reloads**: a multi-day file (e.g. a backtest)
@@ -48,9 +50,13 @@ For handing your decisions to someone (or something) that will try to infer your
   flagged `after_review` (R).
 - **`s` = skip:** "I saw a setup and passed". It pauses and asks for an optional reason. Enter
   saves, Esc cancels. Skips appear in the list and as grey `skip` dots on the chart.
-- **Notes:** click a trade, a skip or the open position in the Practice list to add or edit a
-  one-line reason, for example "3rd touch, failed push". **⏱** on a row jumps the clock there. In
-  BLIND, jumping back counts as a rewind.
+- **Notes:** click **✎** on a trade, a skip or the open position in the Practice list to add or
+  edit a one-line reason, for example "3rd touch, failed push". In every tab (Practice, Real,
+  Uploaded), clicking elsewhere on a row scrolls both charts to that trade at the current zoom without moving the clock (so it isn't a
+  rewind). **⏱** jumps the clock there; in BLIND, jumping back counts as a rewind. Both also move
+  the price axis so the entry is in view, keeping its vertical zoom (the axis is then unlocked;
+  **A** returns to auto). A trade carried in from a prior day goes to its exit. Uploaded rows
+  show the file's `tag` and `note` under the trade.
 - **Skip the dead zone (`n`):** jumps to the next 1s close beyond **±kσ of VWAP** (k = 1.5 by
   default, set in the footer, and drawn as a dashed band on the charts). If price is already
   outside, it first waits for price to come back inside and stay there for 30 s. **Stop early**

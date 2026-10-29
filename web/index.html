@@ -50,13 +50,20 @@
   <aside class="hud">
     <div id="clock" class="clock">--:--:--</div>
     <div class="row"><span id="playState">PAUSED</span><span id="speed">1×</span></div>
-    <div class="row"><span id="chartSym">SPY</span><b id="chartPx">—</b></div>
-    <div class="row"><span>VWAP</span><span id="vwapPx">—</span></div>
-    <div class="row" title="Trades per second over the last 10 s, vs the session average so far"><span>Tape (10s)</span><span id="tapePx">—</span></div>
-    <div class="row muted"><span>VAL / POC / VAH</span><span id="vaInfo">—</span></div>
-    <div class="row" id="rootRow"><span id="rootSym">SPX</span><b id="rootPx">—</b></div>
+    <div class="sect" data-sect="market">
+      <div class="shead">Market</div>
+      <div class="sbody">
+        <div class="row"><span id="chartSym">SPY</span><b id="chartPx">—</b></div>
+        <div class="row"><span>VWAP</span><span id="vwapPx">—</span></div>
+        <div class="row" title="Trades per second over the last 10 s, vs the session average so far"><span>Tape (10s)</span><span id="tapePx">—</span></div>
+        <div class="row muted"><span>VAL / POC / VAH</span><span id="vaInfo">—</span></div>
+        <div class="row" id="rootRow"><span id="rootSym">SPX</span><b id="rootPx">—</b></div>
+      </div>
+    </div>
 
-    <div class="ticket">
+    <div class="ticket sect" data-sect="ticket">
+      <div class="shead">Ticket</div>
+      <div class="sbody">
       <div class="row"><span>Offset</span>
         <span class="stepper"><button id="offDn" title="ITM (,)">−</button><b id="offset">0</b><button id="offUp" title="OTM (.)">+</button></span>
         <span class="muted" id="offsetLbl">ATM</span></div>
@@ -68,27 +75,37 @@
         <button id="buyPut" class="buy-put" title="Buy put at mid (p); while long a put, adds to it">Buy P <kbd>p</kbd></button>
         <button id="closePos" title="Close at bid (x)">Close <kbd>x</kbd></button>
       </div>
+      </div>
     </div>
 
-    <div class="opt call">
-      <div class="row"><b>CALL</b><span id="cStrike">—</span></div>
-      <div class="quote"><span>bid <b id="cBid">—</b></span><span>mid <b id="cMid">—</b></span><span>ask <b id="cAsk">—</b></span></div>
-      <div class="age" id="cAge"></div>
-    </div>
-    <div class="opt put">
-      <div class="row"><b>PUT</b><span id="pStrike">—</span></div>
-      <div class="quote"><span>bid <b id="pBid">—</b></span><span>mid <b id="pMid">—</b></span><span>ask <b id="pAsk">—</b></span></div>
-      <div class="age" id="pAge"></div>
+    <div class="sect" data-sect="quotes">
+      <div class="shead">Quotes</div>
+      <div class="sbody opts">
+        <div class="opt call">
+          <div class="row"><b>CALL</b><span id="cStrike">—</span></div>
+          <div class="quote"><span>bid <b id="cBid">—</b></span><span>mid <b id="cMid">—</b></span><span>ask <b id="cAsk">—</b></span></div>
+          <div class="age" id="cAge"></div>
+        </div>
+        <div class="opt put">
+          <div class="row"><b>PUT</b><span id="pStrike">—</span></div>
+          <div class="quote"><span>bid <b id="pBid">—</b></span><span>mid <b id="pMid">—</b></span><span>ask <b id="pAsk">—</b></span></div>
+          <div class="age" id="pAge"></div>
+        </div>
+      </div>
     </div>
 
-    <div class="position hidden" id="posBox">
-      <div class="row"><b id="posTitle">LONG</b><span id="posHold" class="muted"></span></div>
-      <div class="row"><span>entry mid</span><span id="posEntry">—</span></div>
-      <div class="row"><span>bid now</span><span id="posBid">—</span></div>
-      <div class="row"><span>unrealized</span><b id="posPnl">—</b></div>
-      <div class="row muted"><span>MFE / MAE</span><span id="posExc">—</span></div>
+    <div class="position sect hidden" id="posBox" data-sect="position">
+      <div class="row shead"><b id="posTitle">LONG</b><span id="posHold" class="muted"></span></div>
+      <div class="sbody">
+        <div class="row"><span>entry mid</span><span id="posEntry">—</span></div>
+        <div class="row"><span>bid now</span><span id="posBid">—</span></div>
+        <div class="row"><span>unrealized</span><b id="posPnl">—</b></div>
+        <div class="row muted"><span>MFE / MAE</span><span id="posExc">—</span></div>
+      </div>
     </div>
-    <section class="journal" id="journal">
+    <section class="journal sect" id="journal" data-sect="trades">
+    <div class="shead">Trades</div>
+    <div class="sbody jbody">
     <div class="jtabs">
       <button data-tab="practice" class="active">Practice</button>
       <button data-tab="broker">Real</button>
@@ -96,6 +113,7 @@
     </div>
     <div class="jtools">
       <label class="chk" title="Show this list's trades on the charts"><input id="jShow" type="checkbox" checked> on chart</label>
+      <button id="jSort" title="Order by entry time: oldest or newest first">↑ oldest</button>
       <span class="right">
         <button id="jUpload" title="Load trades from a JSON file (order_history.json format or a practice export)">Upload</button>
         <button id="jExport" title="Download this session's practice trades as JSON">Export</button>
@@ -108,8 +126,12 @@
     <div class="jsum" id="jSum"></div>
     <div class="jlist" id="jList"></div>
     <div class="jfoot muted" id="jFoot"></div>
+    </div>
     </section>
-    <div class="meta" id="meta"></div>
+    <div class="sect" data-sect="info">
+      <div class="shead">Session</div>
+      <div class="sbody meta" id="meta"></div>
+    </div>
   </aside>
 </main>
 
@@ -163,7 +185,7 @@
       <tr><td>Ctrl+&rarr; / &larr;</td><td>jump 30 s · with Shift 5 min</td></tr>
       <tr><td>n</td><td>skip the dead zone: next 1s close beyond ±kσ of VWAP, or 2 s after a 1s candle ≥ F× the largest 1s range of the prior 5 min, whichever is first (k, "stop early" and F in the footer; refused in a position; ±k drawn dashed)</td></tr>
       <tr><td>s</td><td>skip: log "saw a setup, passed" at the clock, with an optional reason (Enter saves, Esc cancels)</td></tr>
-      <tr><td>notes</td><td>click a Practice trade, skip or the open position to add / edit its note · ⏱ jumps the clock there</td></tr>
+      <tr><td>trades list</td><td>click a row (any tab) to show that trade on the charts (same zoom, clock unchanged) · ✎ adds / edits its note · ⏱ jumps the clock there</td></tr>
       <tr><td>v</td><td>toggle BLIND (future hidden) / REVIEW (whole day)</td></tr>
       <tr><td>g</td><td>jump to a time (type 10:32, Enter)</td></tr>
       <tr><td>r</td><td>random session for this root/DTE with the date hidden (Reveal shows it)</td></tr>
